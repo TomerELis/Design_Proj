@@ -8,6 +8,8 @@
 
 #define Buffer_size 1024
 #define maxLen 256
+#define password "Kofiko"
+
 //prototype
 int createWelcomeSocket(short port, int maxClient);
 int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data);
@@ -143,8 +145,25 @@ int main( int argc, char *argv[] )  {
                             data[len]='\0';
                             printf("%s has connected to the server.\n",userName[index]);
                             memset(buffer,0,Buffer_size);
+
                             sprintf(buffer,"User: %s has said: %s \n",userName[index],data);
-                            // Broadcast message to other clients
+                            printf("%s has connected to the server.\n",buffer);
+                            
+                            //----------------------------------------------------------------- 
+                            //add by bar - check if the password correct (please do use more then 7 usernames)
+                            if (strcmp(data, password) == 0) {
+   				 // Password matches
+    				printf("Client provided correct password: %s\n", password);
+    				printf("Welcome to Sales Show\n");
+    				// Further actions for authenticated client
+    	                        // Broadcast message to other clients
+    	                        }
+    	                    else {
+   				 // Password does not match
+    				printf("Client provided incorrect password: %s\n", data);			//TODO: add timer and close socket
+   				 // Close the connection or handle authentication failure
+				}					
+    	                       //----------------------------------------------------------------- 
                             for(j=0;j<maxClient;j++){
                                 if((clientSocket[j]!=i)&&(clientSocket[j]!=0)){
                                     if(send(clientSocket[j],buffer,Buffer_size,0)<0){

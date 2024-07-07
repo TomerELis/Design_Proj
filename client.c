@@ -10,7 +10,7 @@
 
 int main( int argc, char *argv[] )  {
     // Check if the program is executed with exactly 5 arguments
-    if( argc == 5 ) {
+    if( argc == 5) {
         // Declare variables for managing file descriptors and data
         fd_set fdset, rdset;
         FD_ZERO(&fdset); // Initialize fdset to zero
@@ -127,3 +127,4 @@ int main( int argc, char *argv[] )  {
         return -1;
     }
 }
+
