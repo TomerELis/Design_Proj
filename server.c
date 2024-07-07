@@ -8,6 +8,23 @@
 
 #define Buffer_size 1024
 #define maxLen 256
+#define password "Kofiko"
+
+struct user {
+    int username;
+    int socket;
+    int saleid;  // Assuming titles can be up to 50 characters long
+};
+
+struct Sale {
+    int id;
+    char title[50];  // Assuming titles can be up to 50 characters long
+    char multicast_ip[50];
+    int num_of_clients = 0;
+};
+
+
+
 //prototype
 int createWelcomeSocket(short port, int maxClient);
 int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data);
@@ -143,8 +160,37 @@ int main( int argc, char *argv[] )  {
                             data[len]='\0';
                             printf("%s has connected to the server.\n",userName[index]);
                             memset(buffer,0,Buffer_size);
+
                             sprintf(buffer,"User: %s has said: %s \n",userName[index],data);
-                            // Broadcast message to other clients
+                            printf("%s has connected to the server.\n",buffer);
+                            
+                            //----------------------------------------------------------------- 
+                            //add by bar - check if the password correct (please do use more then 7 usernames)
+                            if (strcmp(data, password) == 0) {
+   				 // Password matches
+    				printf("Client provided correct password: %s\n", password);
+    				printf("Welcome to Sales Show\n");
+    				
+    				
+    				char menu_buff[] = "here Electronic=10";
+				int succeed = send(clientSocket[index], menu_buff, strlen(menu_buff), 0);
+				if (succeed < 0) {
+				    perror("send failed");
+				    // Handle send failure as per your server application logic
+				}
+				
+			
+				
+				
+    				// Further actions for authenticated client
+    	                        // Broadcast message to other clients
+    	                        }
+    	                    else {
+   				 // Password does not match
+    				printf("Client provided incorrect password: %s\n", data);			//TODO: add timer and close socket
+   				 // Close the connection or handle authentication failure
+				}					
+    	                       //----------------------------------------------------------------- 
                             for(j=0;j<maxClient;j++){
                                 if((clientSocket[j]!=i)&&(clientSocket[j]!=0)){
                                     if(send(clientSocket[j],buffer,Buffer_size,0)<0){
