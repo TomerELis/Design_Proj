@@ -9,18 +9,20 @@
 #define Buffer_size 1024
 #define maxLen 256
 #define password "Kofiko"
+#define MAX_SALES 10
 
 struct user {
     int username;
     int socket;
     int saleid;  // Assuming titles can be up to 50 characters long
+    int switchstate;
 };
 
 struct Sale {
     int id;
     char title[50];  // Assuming titles can be up to 50 characters long
     char multicast_ip[50];
-    int num_of_clients = 0;
+    int num_of_clients;
 };
 
 
@@ -28,6 +30,10 @@ struct Sale {
 //prototype
 int createWelcomeSocket(short port, int maxClient);
 int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data);
+
+// Function to send menu to client
+void sendMenu(int clientSocket);
+int num_of_sales = 4;
 
 int main( int argc, char *argv[] )  {
     // Check if the correct number of arguments (port and max clients) are provided
@@ -169,20 +175,11 @@ int main( int argc, char *argv[] )  {
                             if (strcmp(data, password) == 0) {
    				 // Password matches
     				printf("Client provided correct password: %s\n", password);
-    				printf("Welcome to Sales Show\n");
     				
     				
-    				char menu_buff[] = "here Electronic=10";
-				int succeed = send(clientSocket[index], menu_buff, strlen(menu_buff), 0);
-				if (succeed < 0) {
-				    perror("send failed");
-				    // Handle send failure as per your server application logic
-				}
-				
-			
-				
-				
-    				// Further actions for authenticated client
+        			sendMenu(clientSocket[index]);
+		
+    				
     	                        // Broadcast message to other clients
     	                        }
     	                    else {
@@ -268,4 +265,32 @@ int createWelcomeSocket(short port, int maxClient){
         return -1;
     }
     return serverSocket;
+}
+
+// Function to send menu to client
+void sendMenu(int clientSocket) {
+
+    struct Sale sales[MAX_SALES] = {
+        {1, "Summer Sale","0.0.0.0",0},
+        {2, "Back to School Sale","0.0.0.0",0},
+        {3, "Holiday Sale","0.0.0.0",0},
+        {4, "End of Year Clearance","0.0.0.0",0},
+        {-1, "Exit","0.0.0.0",0}
+    };
+
+    char Mbuffer[1024];  // Buffer to hold serialized menu data
+    memset(Mbuffer, 0, sizeof(Mbuffer));  // Clear buffer
+
+    // Serialize menu data into buffer
+    int offset = 0;
+    for (int i = 0; i < num_of_sales+1; ++i) {
+        offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
+    }
+
+    // Send serialized menu to client
+    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
+    if (succeed < 0) {
+        perror("send failed");
+        // Handle send failure as per your server application logic
+    }
 }
