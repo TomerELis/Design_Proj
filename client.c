@@ -7,10 +7,12 @@
 #include <unistd.h>
 
 #define Buffer_size 1024
+//help functions
+void clearInputBuffer();
 
 int main( int argc, char *argv[] )  {
     // Check if the program is executed with exactly 5 arguments
-    if( argc == 5 ) {
+    if( argc == 5) {
         // Declare variables for managing file descriptors and data
         fd_set fdset, rdset;
         FD_ZERO(&fdset); // Initialize fdset to zero
@@ -90,15 +92,40 @@ int main( int argc, char *argv[] )  {
 
             // Check if there is user input from stdin
             if(FD_ISSET(fileno(stdin), &rdset)){
-                printf("Client decided to quit\n");
-                close(clientSocket);
-                free(username);
-                free(message);
-                return 0;
+                //printf("Client decided to not  quit\n");
+                //close(clientSocket);
+                //free(username);
+                //free(message);
+                //return 0;
+                setbuf(stdin, NULL);  // Flush stdin buffer
+                
+                         // Read input from stdin and handle it
+            char input[100];  // Adjust size according to your needs
+            if (fgets(input, sizeof(input), stdin)) {
+                // Process input here
+                int num;
+                if (sscanf(input, "%d", &num) == 1) {
+                    printf("You entered: %d\n", num);
+                    // Send the integer string to the server
+		    int succeed = send(clientSocket, input, strlen(input), 0);
+		    if (succeed < 0) {
+			perror("send failed");
+			exit(EXIT_FAILURE);
+		    }
+                } else {
+                    printf("Invalid input\n");
+                }
+            }
+                
+                clearInputBuffer();
+                continue;
+                
             } else { // Check if socket is ready to receive data
                 memset(buffer, 0, Buffer_size); // Clear buffer
 
                 // Receive data from the server
+                
+                
                 if((numOfRecive = recv(clientSocket, buffer, Buffer_size, 0)) > 0) {
                     buffer[numOfRecive] = '\0'; // Null-terminate received data
                     printf("%s\n", buffer); // Print received message
@@ -126,4 +153,10 @@ int main( int argc, char *argv[] )  {
         printf("4 arguments expected.\n"); // Print error message if arguments are incorrect
         return -1;
     }
+}
+
+void clearInputBuffer() {
+int c;
+    while ((c = getchar()) != '\n' && c != EOF);
+
 }
