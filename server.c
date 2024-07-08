@@ -9,10 +9,43 @@
 #define Buffer_size 1024
 #define maxLen 256
 #define password "Kofiko"
+#define MAX_SALES 10
+
+#define error -1
+#define login 1
+#define lobby 2
+#define sale 3
+#define winner 4
+
+//flags - FFTW : FLAG FOR THE WIN!!!!!!!!!!!!!!!!!!!
+int login_flg = 0; // flag for the ... log in
+int menu_flg = 0;
+int lvl = login;
+
+
+struct user {
+    int username;
+    int socket;
+    int saleid;  // Assuming titles can be up to 50 characters long
+    int switchstate;
+};
+
+struct Sale {
+    int id;
+    char title[50];  // Assuming titles can be up to 50 characters long
+    char multicast_ip[50];
+    int num_of_clients;
+};
+
+
 
 //prototype
 int createWelcomeSocket(short port, int maxClient);
 int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data);
+
+// Function to send menu to client
+void sendMenu(int clientSocket);
+int num_of_sales = 4;
 
 int main( int argc, char *argv[] )  {
     // Check if the correct number of arguments (port and max clients) are provided
@@ -65,9 +98,16 @@ int main( int argc, char *argv[] )  {
         FD_ZERO(&current_socket);
         FD_SET(welcomeSocket,&current_socket);
         FD_SET(fileno(stdin),&current_socket);
+	
+
+
+
+
+
 
         // Main server loop
-        while(1) {
+        while(1) {				//we were on listen mod and now client joined
+	printf("\nupupupupupupuppupupup\n");
             ready_socket= current_socket;
             // Use select to wait for activity on sockets
             if(select(FD_SETSIZE, &ready_socket,NULL,NULL,NULL)<0){
@@ -107,7 +147,7 @@ int main( int argc, char *argv[] )  {
                             numOfconnect++;
                         }
                     } else {
-                        // Handle messages from connected clients
+                        // Handle messages from connected clients	~THE_GOOD_PLACE~
                         if((numOfByte= recv(i,buffer,Buffer_size,0))<0){
                             perror("reading failed");
                             exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
@@ -133,36 +173,54 @@ int main( int argc, char *argv[] )  {
                             }
                         } else {
                             // Handle initial message from client
-                            index=0;
-                            while (index<numOfconnect&&clientSocket[index]!=i) ++index;
-                            sprintf(userName[index],"%6s",buffer);
-                            userName[index][6]='\0';
-                            len=(16*buffer[7]+buffer[6]);
-                            memset(data,0,maxLen);
-                            for(j=0;j<len;j++){
-                                data[j]=buffer[8+j];
-                            }
-                            data[len]='\0';
-                            printf("%s has connected to the server.\n",userName[index]);
-                            memset(buffer,0,Buffer_size);
 
-                            sprintf(buffer,"User: %s has said: %s \n",userName[index],data);
-                            printf("%s has connected to the server.\n",buffer);
-                            
+	
+			switch (lvl){
+				case login: 
+		                    index=0;
+		                    while (index<numOfconnect&&clientSocket[index]!=i) ++index;
+		                    sprintf(userName[index],"%6s",buffer);
+		                    userName[index][6]='\0';
+		                    len=(16*buffer[7]+buffer[6]);
+		                    memset(data,0,maxLen);
+		                    for(j=0;j<len;j++){
+		                        data[j]=buffer[8+j];
+		                    }
+		                    data[len]='\0';
+		                    printf("%s has connected to the server.\n",userName[index]);
+		                    memset(buffer,0,Buffer_size);
+
+		                  //sprintf(buffer,"User: %s has said: %s \n",userName[index],data);
+		                  //printf("%s has connected to the server.\n",buffer);
+		                    
                             //----------------------------------------------------------------- 
-                            //add by bar - check if the password correct (please do use more then 7 usernames)
-                            if (strcmp(data, password) == 0) {
-   				 // Password matches
-    				printf("Client provided correct password: %s\n", password);
-    				printf("Welcome to Sales Show\n");
-    				// Further actions for authenticated client
-    	                        // Broadcast message to other clients
-    	                        }
-    	                    else {
-   				 // Password does not match
-    				printf("Client provided incorrect password: %s\n", data);			//TODO: add timer and close socket
-   				 // Close the connection or handle authentication failure
-				}					
+                            //add by bar - check if the password correct (please do use more then 7 usernames)			
+                            
+					if (strcmp(data, password) == 0) {
+   					 // Password matches
+    					printf("Client provided correct password: %s\n", password);
+	    				
+					printf("bobo stuck at lvl lobby");
+	    				sendMenu(clientSocket[index]);
+					lvl = lobby;	
+					break;
+		
+	    				
+	    	                        // Broadcast message to other clients
+	    	                        }
+	    	                    else {
+	   				 // Password does not match
+	    				printf("Client provided incorrect password: %s\n", data);			//TODO: add timer and close socket
+	   				 // Close the connection or handle authentication failure
+					}
+
+				case lobby:
+					//the data from client at buffer
+					printf("client choose to join sale num %s\n", buffer);
+
+
+break;
+				}				
     	                       //----------------------------------------------------------------- 
                             for(j=0;j<maxClient;j++){
                                 if((clientSocket[j]!=i)&&(clientSocket[j]!=0)){
@@ -241,4 +299,32 @@ int createWelcomeSocket(short port, int maxClient){
         return -1;
     }
     return serverSocket;
+}
+
+// Function to send menu to client
+void sendMenu(int clientSocket) {
+
+    struct Sale sales[MAX_SALES] = {
+        {1, "Summer Sale","0.0.0.0",0},
+        {2, "Back to School Sale","0.0.0.0",0},
+        {3, "Holiday Sale","0.0.0.0",0},
+        {4, "End of Year Clearance","0.0.0.0",0},
+        {-1, "Exit","0.0.0.0",0}
+    };
+
+    char Mbuffer[1024];  // Buffer to hold serialized menu data
+    memset(Mbuffer, 0, sizeof(Mbuffer));  // Clear buffer
+
+    // Serialize menu data into buffer
+    int offset = 0;
+    for (int i = 0; i < num_of_sales+1; ++i) {
+        offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
+    }
+
+    // Send serialized menu to client
+    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
+    if (succeed < 0) {
+        perror("send failed");
+        // Handle send failure as per your server application logic
+    }
 }
