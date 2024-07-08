@@ -1,0 +1,8 @@
+if (strcmp(buffer, "-1") == 0) {
+    close(clientSocket[index]);
+    clientSocket[index] = 0;
+    numOfconnect--;
+    FD_CLR(i, &current_socket);
+    printf("Client disconnected due to invalid buffer value.\n");
+    break;
+}
