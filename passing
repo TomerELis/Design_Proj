@@ -1,8 +1,92 @@
-if (strcmp(buffer, "-1") == 0) {
-    close(clientSocket[index]);
-    clientSocket[index] = 0;
-    numOfconnect--;
-    FD_CLR(i, &current_socket);
-    printf("Client disconnected due to invalid buffer value.\n");
-    break;
+#include <stdio.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+#define Buffer_size 1024
+
+int main(int argc, char *argv[]) {
+    if (argc == 5) {
+        // Extract command line arguments
+        char* username = strdup(argv[3]);
+        char* message = strdup(argv[4]);
+        int msg_len = strlen(message);
+
+        // Declare variables for socket and address
+        int clientSocket, byteSend, numOfRecive = 0;
+        char buffer[Buffer_size];
+        struct sockaddr_in serverAddr;
+        socklen_t addr_size;
+
+        // Create UDP socket for multicast communication
+        clientSocket = socket(AF_INET, SOCK_DGRAM, 0);
+        if (clientSocket < 0) {
+            perror("socket failed");
+            free(username);
+            free(message);
+            exit(EXIT_FAILURE);
+        }
+
+        // Set up server address structure
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons((short)atoi(argv[2]));
+        serverAddr.sin_addr.s_addr = inet_addr(argv[1]);
+        memset(serverAddr.sin_zero, 0, sizeof(serverAddr.sin_zero));
+        addr_size = sizeof(serverAddr);
+
+        // Join the multicast group
+        struct ip_mreq multicast_req;
+        multicast_req.imr_multiaddr.s_addr = inet_addr(argv[1]);  // Multicast IP address
+        multicast_req.imr_interface.s_addr = htonl(INADDR_ANY);   // Use default interface
+
+        if (setsockopt(clientSocket, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&multicast_req, sizeof(multicast_req)) < 0) {
+            perror("setsockopt failed");
+            close(clientSocket);
+            free(username);
+            free(message);
+            exit(EXIT_FAILURE);
+        }
+
+        // Connection to server (multicast group) successful
+        printf("Connected to multicast group!\n");
+
+        // Prepare and send a message to the server (multicast group)
+        sprintf(buffer, "%6s%d%d%s\n", username, 0, 0, message);
+        buffer[6] = (char)(msg_len % 16);
+        buffer[7] = (char)(msg_len / 16);
+
+        if ((byteSend = sendto(clientSocket, buffer, Buffer_size, 0, (struct sockaddr *)&serverAddr, addr_size)) < 0) {
+            perror("sendto failed");
+            close(clientSocket);
+            free(username);
+            free(message);
+            exit(EXIT_FAILURE);
+        }
+
+        // Monitor the socket for incoming data
+        while (1) {
+            memset(buffer, 0, Buffer_size); // Clear buffer
+
+            // Receive data from the server (multicast group)
+            if ((numOfRecive = recv(clientSocket, buffer, Buffer_size, 0)) > 0) {
+                buffer[numOfRecive] = '\0'; // Null-terminate received data
+                printf("%s\n", buffer);    // Print received message
+            }
+
+            // Handle receive errors
+            if (numOfRecive < 0) {
+                perror("recv failed");
+                close(clientSocket);
+                free(username);
+                free(message);
+                exit(EXIT_FAILURE);
+            }
+        }
+    } else {
+        printf("4 arguments expected.\n");
+        return -1;
+    }
 }
