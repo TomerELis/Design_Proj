@@ -217,6 +217,18 @@ int main( int argc, char *argv[] )  {
 				case lobby:
 					//the data from client at buffer
 					printf("client choose to join sale num %s\n", buffer);
+					printf("  %s", buffer);
+					
+					
+
+					if (buffer[0] == '-' && buffer[1] == '1') {
+					    close(clientSocket[index]);
+					    clientSocket[index] = 0;
+					    numOfconnect--;
+					    FD_CLR(i, &current_socket);
+					    printf("Client disconnected due to invalid buffer value.\n");
+					    break;
+					}
 
 
 break;
