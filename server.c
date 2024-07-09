@@ -5,14 +5,12 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <time.h>
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
 #define MAX_CLIENTS 10
 #define secret "Kofiko"
 #define MAX_SALES 10
-#define password_DURATION 30  // 1 minute since we open the server
 
 typedef struct {
     int socket;
@@ -25,21 +23,19 @@ typedef struct {
 struct Sale {
     int id;
     char title[50];  // Assuming titles can be up to 50 characters long
-    char multicast_ip[50];
+    char multicast_ip[50], data[50];
     int num_of_clients;
 };
 
 //help function
 void sendMenu(int clientSocket);
+void send_data(int clientSocket, char data[50]);
 
 //global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 int flg=0;
-time_t current_time,start_time;
-int remaining_time;	
-
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -62,11 +58,11 @@ int accept_bets(int server_fd) {
             clients[client->client_id] = client;
             printf("Client %d connected.\n", client->client_id);
         }
-	
+
     while (1) {
 
-        
-
+        //char dat[50] = "abcdefg";			******HOW TO SEND DATA TO CLIENT
+	//send_data(client->socket, dat);
         // Receive data from client if available
         printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
@@ -89,8 +85,20 @@ int accept_bets(int server_fd) {
 	   		//****************
 	   		// Send data to the client
 	   		sleep(2);
-	   		sendMenu(client->socket);
-			bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+			while(1)			//while user choose right menu numb
+			{
+		   		sendMenu(client->socket);
+				memset(buffer, 0, BUFFER_SIZE);
+				bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+				int numb_menu = atoi(buffer);
+				if (numb_menu > num_of_sales)
+				{
+					printf("problem cause in menu we have only %d options and user 					choose number : %d \n", num_of_sales, numb_menu);
+				}
+				else
+				 break;
+			}
+			printf("username choose on menu the numb - %s\n", buffer);
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -125,16 +133,6 @@ int accept_bets(int server_fd) {
         } else {
  	    close(new_socket);
             perror("Receive failed");
-		start_time = time(NULL);
-	
-		while(1){
-		current_time = time(NULL);
- 		remaining_time = (int)difftime(start_time + password_DURATION, current_time);
-	 	printf("\rabord in:%d",remaining_time);
-		if (remaining_time <=0){
-			break;
-		}
-	}
            return -1;
         }
         
@@ -195,6 +193,18 @@ int main() {
     return 0;
 }
 // Function to send menu to client
+
+void send_data(int clientSocket, char data[50]) {
+
+	int send_me = send(clientSocket, data, strlen(data), 0);
+	//send_me = recv(clientSocket, data, BUFFER_SIZE, 0);
+
+	if (send_me < 0) 
+	  perror("send failed");
+	printf("sss");
+   };
+
+
 void sendMenu(int clientSocket) {
 
     struct Sale sales[MAX_SALES] = {
