@@ -5,12 +5,14 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <time.h>
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
 #define MAX_CLIENTS 10
 #define secret "Kofiko"
 #define MAX_SALES 10
+#define password_DURATION 30  // 1 minute since we open the server
 
 typedef struct {
     int socket;
@@ -35,6 +37,9 @@ int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 int flg=0;
+time_t current_time,start_time;
+int remaining_time;	
+
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -57,7 +62,7 @@ int accept_bets(int server_fd) {
             clients[client->client_id] = client;
             printf("Client %d connected.\n", client->client_id);
         }
-
+	
     while (1) {
 
         
@@ -120,6 +125,16 @@ int accept_bets(int server_fd) {
         } else {
  	    close(new_socket);
             perror("Receive failed");
+		start_time = time(NULL);
+	
+		while(1){
+		current_time = time(NULL);
+ 		remaining_time = (int)difftime(start_time + password_DURATION, current_time);
+	 	printf("\rabord in:%d",remaining_time);
+		if (remaining_time <=0){
+			break;
+		}
+	}
            return -1;
         }
         
