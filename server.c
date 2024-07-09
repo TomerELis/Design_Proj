@@ -5,12 +5,14 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <time.h>
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
 #define MAX_CLIENTS 10
 #define secret "Kofiko"
 #define MAX_SALES 10
+#define password_DURATION 30  // 1 minute since we open the server
 
 typedef struct {
     int socket;
@@ -25,17 +27,22 @@ struct Sale {
     char title[50];  // Assuming titles can be up to 50 characters long
     char multicast_ip[50], data[50];
     int num_of_clients;
+    int star_time;
 };
 
 //help function
 void sendMenu(int clientSocket);
 void send_data(int clientSocket, char data[50]);
 
+
 //global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 int flg=0;
+time_t current_time,start_time;
+int remaining_time;
+int real_time = time(NULL)	
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -58,8 +65,8 @@ int accept_bets(int server_fd) {
             clients[client->client_id] = client;
             printf("Client %d connected.\n", client->client_id);
         }
-
-    while (1) {
+	
+   while (1) {
 
         //char dat[50] = "abcdefg";			******HOW TO SEND DATA TO CLIENT
 	//send_data(client->socket, dat);
@@ -133,13 +140,24 @@ int accept_bets(int server_fd) {
         } else {
  	    close(new_socket);
             perror("Receive failed");
+		start_time = time(NULL);
+	
+		while(1){
+		current_time = time(NULL);
+ 		remaining_time = (int)difftime(start_time + password_DURATION, current_time);
+	 	printf("\rabord in:%d",remaining_time);
+		if (remaining_time <=0){
+			break;
+		}
+	}
            return -1;
-        }
+}
         
 
-    }
 
-}
+    
+
+
 
 int main() {
     int server_fd;
@@ -182,6 +200,7 @@ int main() {
     }
     printf("Server is listening on port %d.\n", PORT);
 
+
     // Accept bets from clients
     while(1){
     accept_bets(server_fd);
@@ -189,6 +208,7 @@ int main() {
 
     // Close the server socket (unreachable in this loop)
     close(server_fd);
+
 
     return 0;
 }
@@ -208,11 +228,11 @@ void send_data(int clientSocket, char data[50]) {
 void sendMenu(int clientSocket) {
 
     struct Sale sales[MAX_SALES] = {
-        {1, "Summer Sale","0.0.0.0",0},
-        {2, "Back to School Sale","0.0.0.0",0},
-        {3, "Holiday Sale","0.0.0.0",0},
-        {4, "End of Year Clearance","0.0.0.0",0},
-        {-1, "Exit","0.0.0.0",0}
+        {1, "Summer Sale","224.2.1.1",0,60*5},
+        {2, "Back to School Sale","224.2.2.1",0,60*1},
+        {3, "Holiday Sale","224.2.3.1",0,60*7},
+        {4, "End of Year Clearance","224.2.4.1",0,60*9},
+        {-1, "Exit","0.0.0.0",0,0}
     };
 
     char Mbuffer[1024];  // Buffer to hold serialized menu data
@@ -230,4 +250,17 @@ void sendMenu(int clientSocket) {
         perror("send failed");
         // Handle send failure as per your server application logic
     }
+}
+
+// Function to mange sale
+void check_sale(struct Sale my_sale) {
+		current_time = time(NULL);
+ 		remaining_time = (int)difftime(real_time + my_sale->star_time, current_time);
+		if(remaining_time >0){
+	 		printf("\rsale start in:%d",remaining_time);
+		}else{
+			//start sale
+
+		}
+		
 }
