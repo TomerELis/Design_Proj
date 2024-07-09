@@ -35,12 +35,13 @@ int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 int flg=0;
+
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     int new_socket;
     char buffer[BUFFER_SIZE] = {0};
-    ssize_t bytes_received;
+    ssize_t bytes_received,bytes_received_sale;
     Client *client = (Client *)malloc(sizeof(Client));
     
     new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
@@ -76,7 +77,7 @@ int accept_bets(int server_fd) {
 
 
 
-		    if (result == 0) {		//usernasme enter the sales
+		    if (result == 0) {		//usernasme enter the menu mode
 	   		printf("username enter the right pass - %s\n", buffer);
 	   		
 	   		
@@ -84,6 +85,7 @@ int accept_bets(int server_fd) {
 	   		// Send data to the client
 	   		sleep(2);
 	   		sendMenu(client->socket);
+			bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -116,7 +118,9 @@ int accept_bets(int server_fd) {
             printf("Client %d disconnected\n", client_count - 1);
             close(new_socket);
         } else {
+ 	    close(new_socket);
             perror("Receive failed");
+           return -1;
         }
         
 
@@ -166,7 +170,9 @@ int main() {
     printf("Server is listening on port %d.\n", PORT);
 
     // Accept bets from clients
+    while(1){
     accept_bets(server_fd);
+	}
 
     // Close the server socket (unreachable in this loop)
     close(server_fd);
