@@ -25,13 +25,15 @@ typedef struct {
 struct Sale {
     int id;
     char title[50];  // Assuming titles can be up to 50 characters long
-    char multicast_ip[50];
+    char multicast_ip[50], data[50];
     int num_of_clients;
     int star_time;
 };
 
 //help function
 void sendMenu(int clientSocket);
+void send_data(int clientSocket, char data[50]);
+
 
 //global parameters
 int num_of_sales = 4;
@@ -41,7 +43,6 @@ int flg=0;
 time_t current_time,start_time;
 int remaining_time;
 int real_time = time(NULL)	
-
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -65,10 +66,10 @@ int accept_bets(int server_fd) {
             printf("Client %d connected.\n", client->client_id);
         }
 	
-    while (1) {
+   while (1) {
 
-        
-
+        //char dat[50] = "abcdefg";			******HOW TO SEND DATA TO CLIENT
+	//send_data(client->socket, dat);
         // Receive data from client if available
         printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
@@ -91,8 +92,20 @@ int accept_bets(int server_fd) {
 	   		//****************
 	   		// Send data to the client
 	   		sleep(2);
-	   		sendMenu(client->socket);
-			bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+			while(1)			//while user choose right menu numb
+			{
+		   		sendMenu(client->socket);
+				memset(buffer, 0, BUFFER_SIZE);
+				bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+				int numb_menu = atoi(buffer);
+				if (numb_menu > num_of_sales)
+				{
+					printf("problem cause in menu we have only %d options and user 					choose number : %d \n", num_of_sales, numb_menu);
+				}
+				else
+				 break;
+			}
+			printf("username choose on menu the numb - %s\n", buffer);
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -138,12 +151,13 @@ int accept_bets(int server_fd) {
 		}
 	}
            return -1;
-        }
+}
         
 
-    }
 
-}
+    
+
+
 
 int main() {
     int server_fd;
@@ -186,6 +200,7 @@ int main() {
     }
     printf("Server is listening on port %d.\n", PORT);
 
+
     // Accept bets from clients
     while(1){
     accept_bets(server_fd);
@@ -194,9 +209,22 @@ int main() {
     // Close the server socket (unreachable in this loop)
     close(server_fd);
 
+
     return 0;
 }
 // Function to send menu to client
+
+void send_data(int clientSocket, char data[50]) {
+
+	int send_me = send(clientSocket, data, strlen(data), 0);
+	//send_me = recv(clientSocket, data, BUFFER_SIZE, 0);
+
+	if (send_me < 0) 
+	  perror("send failed");
+	printf("sss");
+   };
+
+
 void sendMenu(int clientSocket) {
 
     struct Sale sales[MAX_SALES] = {
