@@ -23,6 +23,7 @@
 
 
 
+
 //prototype
 
 
@@ -33,10 +34,11 @@
 
 int main() {
 
-
+	
 	int sock = 0;
 	struct sockaddr_in serv_addr;
 	char buffer[BUFFER_SIZE] = {0};
+	char buffer2[BUFFER_SIZE] = {0};
 
 	// Create socket
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -78,18 +80,39 @@ int main() {
 
 	    printf("Enter username: ");
 	    scanf("%49s", user);  // Read up to 49 characters for username (prevent buffer overflow)
+	    
+	    // Clear buffer to ensure no garbage data is sent
+	    memset(buffer, 0, BUFFER_SIZE);
+
+	    // Format data to send to the server
+	    snprintf(buffer, BUFFER_SIZE, "%s\n", user);
+	    
+
+	    // Send data to the server
+	    ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
+	    if (bytes_sent < 0) {
+		perror("send failed");
+		close(sock);
+		return -1;
+	    }
+	    
+	    // Read initial message from server
+	    //read(sock, buffer, BUFFER_SIZE);
+	    //printf("%s", buffer);
+	    
 	    printf("Enter password: ");
 	    scanf("%49s", pass);  // Read up to 49 characters for password (prevent buffer overflow)
 
 	    // Clear buffer to ensure no garbage data is sent
 	    memset(buffer, 0, BUFFER_SIZE);
 
-	    // Format data to send to the server
-	    snprintf(buffer, BUFFER_SIZE, "user=%s&pass=%s", user, pass);
+	     // Format data to send to the server
+	    snprintf(buffer2, BUFFER_SIZE, "%s", pass);
+	    
 
 	    // Send data to the server
-	    ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
-	    if (bytes_sent < 0) {
+	    ssize_t pass_sent = send(sock, buffer2, strlen(buffer2), 0);
+	    if (pass_sent < 0) {
 		perror("send failed");
 		close(sock);
 		return -1;
