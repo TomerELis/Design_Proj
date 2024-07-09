@@ -9,31 +9,45 @@
 #define BUFFER_SIZE 1024
 #define PORT 8083
 #define MAX_CLIENTS 10
+#define secret "Kofiko"
+#define MAX_SALES 10
 
 typedef struct {
     int socket;
     struct sockaddr_in address;
     int client_id;
+    char user_name[BUFFER_SIZE];
     char comments[BUFFER_SIZE];
 } Client;
 
+struct Sale {
+    int id;
+    char title[50];  // Assuming titles can be up to 50 characters long
+    char multicast_ip[50];
+    int num_of_clients;
+};
+
+//help function
+void sendMenu(int clientSocket);
+
+//global parameters
+int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
-
-void accept_bets(int server_fd) {
+int flg=0;
+int accept_bets(int server_fd) {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     int new_socket;
     char buffer[BUFFER_SIZE] = {0};
     ssize_t bytes_received;
-
-    while (1) {
-    printf("!!!!fdsfdfssdf");
-        new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+    Client *client = (Client *)malloc(sizeof(Client));
+    
+    new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
         //insert thread
         
         if (new_socket >= 0) {
-            Client *client = (Client *)malloc(sizeof(Client));
+       
             client->socket = new_socket;
             client->address = address;
             client->client_id = client_count++;
@@ -43,15 +57,57 @@ void accept_bets(int server_fd) {
             printf("Client %d connected.\n", client->client_id);
         }
 
+    while (1) {
+
+        
+
         // Receive data from client if available
         printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
             buffer[bytes_received] = '\0';  // Null-terminate the received data
-            printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
-            printf("befot\n");
+            if(flg==1)
+            {
+             printf("Password use the secret password %d: %s\n", client_count - 1, buffer);
+             flg=0;
+            
+             int result = strcmp(secret, buffer);
+
+
+
+
+		    if (result == 0) {		//usernasme enter the sales
+	   		printf("username enter the right pass - %s\n", buffer);
+	   		
+	   		
+	   		//****************
+	   		// Send data to the client
+	   		sleep(2);
+	   		sendMenu(client->socket);
+	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
+	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
+	    		if (menu_send < 0) {
+			perror("send failed");
+			close(client->socket);
+				return -1;
+	    		}*/
+	   		
+		    
+		    }
+		    	else{	//username needed to be socket closed (maybe after 3 wrong)
+		    	printf("str1 and str2 are NOT equal - WEEEWOOOOWEEEEWOOOO\n");
+		   	 }
+	    }
+            else if(flg==0)
+            {printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
+                strncpy(client->user_name, buffer, BUFFER_SIZE);
+            	flg=1;
+            	//printf("POPO!: %s",client->user_name);
+            	}
+            	
+            
             strncpy(clients[client_count - 1]->comments, buffer, BUFFER_SIZE);
-            printf("after\n");    
+               
             
             // Send data to the client his username is 
             
@@ -62,7 +118,10 @@ void accept_bets(int server_fd) {
         } else {
             perror("Receive failed");
         }
+        
+
     }
+
 }
 
 int main() {
@@ -114,4 +173,30 @@ int main() {
 
     return 0;
 }
+// Function to send menu to client
+void sendMenu(int clientSocket) {
 
+    struct Sale sales[MAX_SALES] = {
+        {1, "Summer Sale","0.0.0.0",0},
+        {2, "Back to School Sale","0.0.0.0",0},
+        {3, "Holiday Sale","0.0.0.0",0},
+        {4, "End of Year Clearance","0.0.0.0",0},
+        {-1, "Exit","0.0.0.0",0}
+    };
+
+    char Mbuffer[1024];  // Buffer to hold serialized menu data
+    memset(Mbuffer, 0, sizeof(Mbuffer));  // Clear buffer
+
+    // Serialize menu data into buffer
+    int offset = 0;
+    for (int i = 0; i < num_of_sales+1; ++i) {
+        offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
+    }
+
+    // Send serialized menu to client
+    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
+    if (succeed < 0) {
+        perror("send failed");
+        // Handle send failure as per your server application logic
+    }
+}
