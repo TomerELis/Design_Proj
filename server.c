@@ -5,277 +5,206 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <time.h>
 
-#define Buffer_size 1024
-#define maxLen 256
-#define password "Kofiko"
+#define BUFFER_SIZE 1024
+#define PORT 8083
+#define MAX_CLIENTS 10
+#define secret "Kofiko"
 #define MAX_SALES 10
+#define password_DURATION 30  // 1 minute since we open the server
 
-struct user {
-    int username;
+typedef struct {
     int socket;
-    int saleid;  // Assuming titles can be up to 50 characters long
-    int switchstate;
-};
+    struct sockaddr_in address;
+    int client_id;
+    char user_name[BUFFER_SIZE];
+    char comments[BUFFER_SIZE];
+} Client;
 
 struct Sale {
     int id;
     char title[50];  // Assuming titles can be up to 50 characters long
     char multicast_ip[50];
     int num_of_clients;
+    int star_time;
 };
 
-
-
-//prototype
-int createWelcomeSocket(short port, int maxClient);
-int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data);
-
-// Function to send menu to client
+//help function
 void sendMenu(int clientSocket);
+
+//global parameters
 int num_of_sales = 4;
+Client *clients[MAX_CLIENTS];
+int client_count = 0;
+int flg=0;
+time_t current_time,start_time;
+int remaining_time;
+int real_time = time(NULL)	
 
-int main( int argc, char *argv[] )  {
-    // Check if the correct number of arguments (port and max clients) are provided
-    if( argc == 3 ) {
-        int welcomeSocket,len, maxClient=(int)atoi(argv[2]),i=0,j=0, numOfByte=0,numOfconnect=0,index=0;
-        int *clientSocket, fullFlag=0;
-        short portNum=(short)atoi(argv[1]);
-        char buffer[Buffer_size];
-        char **userName,*data=NULL;
-        struct sockaddr_in *clientAddr;
-        struct sockaddr_in welcomeAddr;
-        fd_set current_socket, ready_socket;
-        socklen_t welcome_size, client_size;
 
-        // Initialize memory for structs and arrays
-        memset(welcomeAddr.sin_zero, 0, sizeof welcomeAddr.sin_zero);
+int accept_bets(int server_fd) {
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    int new_socket;
+    char buffer[BUFFER_SIZE] = {0};
+    ssize_t bytes_received,bytes_received_sale;
+    Client *client = (Client *)malloc(sizeof(Client));
+    
+    new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+        //insert thread
+        
+        if (new_socket >= 0) {
+       
+            client->socket = new_socket;
+            client->address = address;
+            client->client_id = client_count++;
+            memset(client->comments, 0, BUFFER_SIZE);
 
-        userName=(char**)malloc(maxClient*sizeof(char *));
-        clientAddr=(struct sockaddr_in*)malloc((maxClient * (sizeof(struct sockaddr_in))));
-        clientSocket= (int*)malloc(maxClient*(sizeof(int)));
-        data=(char*)malloc((maxLen+1)* sizeof(char));
-
-        // Initialize userName array with allocated memory
-        for(i=0;i<maxClient;i++){
-            userName[i]=(char*) malloc(7* sizeof(char));
-            if(userName[i]==NULL){
-                for(j=0;j<i;j++){
-                    free(userName[j]);
-                }
-            }
+            clients[client->client_id] = client;
+            printf("Client %d connected.\n", client->client_id);
         }
-        // Initialize clientSocket array with zeros
-        for(i=0;i<maxClient;i++){
-            clientSocket[i]=0;
+	
+    while (1) {
+
+        
+
+        // Receive data from client if available
+        printf("!!!!!!!!!\n");
+        bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0';  // Null-terminate the received data
+            if(flg==1)
+            {
+             printf("Password use the secret password %d: %s\n", client_count - 1, buffer);
+             flg=0;
+            
+             int result = strcmp(secret, buffer);
+
+
+
+
+		    if (result == 0) {		//usernasme enter the menu mode
+	   		printf("username enter the right pass - %s\n", buffer);
+	   		
+	   		
+	   		//****************
+	   		// Send data to the client
+	   		sleep(2);
+	   		sendMenu(client->socket);
+			bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
+	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
+	    		if (menu_send < 0) {
+			perror("send failed");
+			close(client->socket);
+				return -1;
+	    		}*/
+	   		
+		    
+		    }
+		    	else{	//username needed to be socket closed (maybe after 3 wrong)
+		    	printf("str1 and str2 are NOT equal - WEEEWOOOOWEEEEWOOOO\n");
+		   	 }
+	    }
+            else if(flg==0)
+            {printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
+                strncpy(client->user_name, buffer, BUFFER_SIZE);
+            	flg=1;
+            	//printf("POPO!: %s",client->user_name);
+            	}
+            	
+            
+            strncpy(clients[client_count - 1]->comments, buffer, BUFFER_SIZE);
+               
+            
+            // Send data to the client his username is 
+            
+	
+        } else if (bytes_received == 0) {
+            printf("Client %d disconnected\n", client_count - 1);
+            close(new_socket);
+        } else {
+ 	    close(new_socket);
+            perror("Receive failed");
+		start_time = time(NULL);
+	
+		while(1){
+		current_time = time(NULL);
+ 		remaining_time = (int)difftime(start_time + password_DURATION, current_time);
+	 	printf("\rabord in:%d",remaining_time);
+		if (remaining_time <=0){
+			break;
+		}
+	}
+           return -1;
         }
+        
 
-        // Check if memory allocation was successful
-        if(clientAddr==NULL||clientSocket==NULL||userName==NULL||data==NULL){
-            perror("malloc failed");
-            exit(EXIT_FAILURE);
-        }
-
-        // Create welcome socket and handle errors
-        welcomeSocket= createWelcomeSocket(portNum, maxClient);
-        if(welcomeSocket<0){
-            exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-        }
-
-        // Initialize file descriptor sets for socket and stdin
-        FD_ZERO(&current_socket);
-        FD_SET(welcomeSocket,&current_socket);
-        FD_SET(fileno(stdin),&current_socket);
-
-        // Main server loop
-        while(1) {
-            ready_socket= current_socket;
-            // Use select to wait for activity on sockets
-            if(select(FD_SETSIZE, &ready_socket,NULL,NULL,NULL)<0){
-                perror("select failed");
-                exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                exit(EXIT_FAILURE);
-            }
-            // Check if stdin (console input) is set, indicating server shutdown
-            if(FD_ISSET(fileno(stdin),&ready_socket)){
-                printf("Bye Bye...\n");
-                exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                return 0;
-            }
-            // Iterate through all sockets in the set
-            for(i=0;i<FD_SETSIZE;i++){
-                if(FD_ISSET(i,&ready_socket)){
-                    // Handle new connections to the welcome socket
-                    if(i == welcomeSocket){
-                        // Check if maximum connections reached
-                        if((numOfconnect==maxClient)&&!fullFlag){
-                            close(welcomeSocket);
-                            FD_CLR(welcomeSocket,&current_socket);
-                            fullFlag=1;
-                        }
-                        // Accept new connection if space available
-                        if(!fullFlag){
-                            index=0;
-                            while(index<maxClient&&clientSocket[index]!=0) ++index;
-                            client_size= sizeof(clientAddr[index]);
-                            memset(&clientAddr[index],0,client_size);
-                            if((clientSocket[index]= accept(welcomeSocket,(struct sockaddr*)&clientAddr[index],&client_size))<0){
-                                perror("accept failed");
-                                exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                                exit(EXIT_FAILURE);
-                            }
-                            FD_SET((clientSocket[index]),&current_socket);
-                            numOfconnect++;
-                        }
-                    } else {
-                        // Handle messages from connected clients
-                        if((numOfByte= recv(i,buffer,Buffer_size,0))<0){
-                            perror("reading failed");
-                            exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                            exit(EXIT_FAILURE);
-                        } else if(numOfByte==0){
-                            // Client disconnected
-                            index=0;
-                            while (index<numOfconnect&&clientSocket[index]!=i) ++index;
-                            printf("%s has left the server...\n",userName[index]);
-                            close(clientSocket[index]);
-                            clientSocket[index]=0;
-                            numOfconnect--;
-                            FD_CLR(i,&current_socket);
-                            // Reopen welcome socket if necessary
-                            if((numOfconnect==(maxClient-1))&&fullFlag){
-                                welcomeSocket= createWelcomeSocket(portNum,maxClient);
-                                if(welcomeSocket<1){
-                                    exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                                    exit(EXIT_FAILURE);
-                                }
-                                FD_SET(welcomeSocket,&current_socket);
-                                fullFlag=0;
-                            }
-                        } else {
-                            // Handle initial message from client
-                            index=0;
-                            while (index<numOfconnect&&clientSocket[index]!=i) ++index;
-                            sprintf(userName[index],"%6s",buffer);
-                            userName[index][6]='\0';
-                            len=(16*buffer[7]+buffer[6]);
-                            memset(data,0,maxLen);
-                            for(j=0;j<len;j++){
-                                data[j]=buffer[8+j];
-                            }
-                            data[len]='\0';
-                            printf("%s has connected to the server.\n",userName[index]);
-                            memset(buffer,0,Buffer_size);
-
-                            sprintf(buffer,"User: %s has said: %s \n",userName[index],data);
-                            printf("%s has connected to the server.\n",buffer);
-                            
-                            //----------------------------------------------------------------- 
-                            //add by bar - check if the password correct (please do use more then 7 usernames)
-                            if (strcmp(data, password) == 0) {
-   				 // Password matches
-    				printf("Client provided correct password: %s\n", password);
-    				
-    				
-        			sendMenu(clientSocket[index]);
-		
-    				
-    	                        // Broadcast message to other clients
-    	                        }
-    	                    else {
-   				 // Password does not match
-    				printf("Client provided incorrect password: %s\n", data);			//TODO: add timer and close socket
-   				 // Close the connection or handle authentication failure
-				}					
-    	                       //----------------------------------------------------------------- 
-                            for(j=0;j<maxClient;j++){
-                                if((clientSocket[j]!=i)&&(clientSocket[j]!=0)){
-                                    if(send(clientSocket[j],buffer,Buffer_size,0)<0){
-                                        perror("send failed");
-                                        exitAll(maxClient,welcomeSocket,clientSocket,userName,clientAddr,data);
-                                        exit(EXIT_FAILURE);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-    } else {
-        printf("2 argument expected.\n");
-        return -1;
     }
+
 }
 
-// Function to clean up and exit server
-int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data){
-    int k=0;
-    for(k=0;k<maxOpen;k++){
-        if(client[k]!=0){
-            close(client[k]);
-        }
-        free(user[k]);
+int main() {
+    int server_fd;
+    struct sockaddr_in address;
+    int opt = 1;
+
+    // Create socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Socket creation error");
+        return -1;
     }
-    close(server);
-    free(client);
-    free(addr);
-    free(user);
-    free(data);
+    printf("Socket created successfully.\n");
+
+    // Set socket option to allow address reuse
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+        perror("Setsockopt error");
+        close(server_fd);
+        return -1;
+    }
+    printf("Socket options set successfully.\n");
+
+    // Set address family (IPv4), IP to listen on all interfaces, and port number
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+
+    // Bind the socket to the specified address
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("Bind failed");
+        close(server_fd);
+        return -1;
+    }
+    printf("Socket bound successfully.\n");
+
+    // Set the socket to listen for incoming connections
+    if (listen(server_fd, 3) < 0) {
+        perror("Listen failed");
+        close(server_fd);
+        return -1;
+    }
+    printf("Server is listening on port %d.\n", PORT);
+
+    // Accept bets from clients
+    while(1){
+    accept_bets(server_fd);
+	}
+
+    // Close the server socket (unreachable in this loop)
+    close(server_fd);
+
     return 0;
 }
-
-// Function to create and configure the welcome socket
-int createWelcomeSocket(short port, int maxClient){
-    int serverSocket, opt=1;
-    struct sockaddr_in serverAddr;
-    socklen_t server_size;
-
-    // Create TCP socket
-    serverSocket= socket(PF_INET,SOCK_STREAM,0);
-    if(serverSocket<0){
-        perror("socket failed");
-        return -1;
-    }
-    // Set socket options to reuse address and port
-    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,&opt, sizeof(opt))){
-        perror("socket option failed");
-        close(serverSocket);
-        return -1;
-    }
-    // Configure server address
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    server_size= sizeof(serverAddr);
-
-    // Bind server socket to address and port
-    if((bind(serverSocket,(struct sockaddr *)&serverAddr,server_size))<0) {
-        perror("binding failed");
-        close(serverSocket);
-        return -1;
-    }
-
-    // Start listening for client connections
-    printf("Server is listen to port %d and wait for new client...\n", port);
-    if((listen(serverSocket,maxClient))<0){
-        perror("listen failed");
-        close(serverSocket);
-        return -1;
-    }
-    return serverSocket;
-}
-
 // Function to send menu to client
 void sendMenu(int clientSocket) {
 
     struct Sale sales[MAX_SALES] = {
-        {1, "Summer Sale","0.0.0.0",0},
-        {2, "Back to School Sale","0.0.0.0",0},
-        {3, "Holiday Sale","0.0.0.0",0},
-        {4, "End of Year Clearance","0.0.0.0",0},
-        {-1, "Exit","0.0.0.0",0}
+        {1, "Summer Sale","224.2.1.1",0,60*5},
+        {2, "Back to School Sale","224.2.2.1",0,60*1},
+        {3, "Holiday Sale","224.2.3.1",0,60*7},
+        {4, "End of Year Clearance","224.2.4.1",0,60*9},
+        {-1, "Exit","0.0.0.0",0,0}
     };
 
     char Mbuffer[1024];  // Buffer to hold serialized menu data
@@ -293,4 +222,17 @@ void sendMenu(int clientSocket) {
         perror("send failed");
         // Handle send failure as per your server application logic
     }
+}
+
+// Function to mange sale
+void check_sale(struct Sale my_sale) {
+		current_time = time(NULL);
+ 		remaining_time = (int)difftime(real_time + my_sale->star_time, current_time);
+		if(remaining_time >0){
+	 		printf("\rsale start in:%d",remaining_time);
+		}else{
+			//start sale
+
+		}
+		
 }
