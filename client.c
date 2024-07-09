@@ -109,7 +109,6 @@ int main() {
 	     // Format data to send to the server
 	    snprintf(buffer2, BUFFER_SIZE, "%s", pass);
 	    
-
 	    // Send data to the server
 	    ssize_t pass_sent = send(sock, buffer2, strlen(buffer2), 0);
 	    if (pass_sent < 0) {
@@ -119,27 +118,22 @@ int main() {
 	    }
 
 	    printf("Connecting to the server... Data sent: user %s, pass %s\n", user, pass);
-
-	   
-
-	    // Create a thread to listen for updates
-	    //pthread_t update_thread;
-	    //pthread_create(&update_thread, NULL, listen_for_updates, &sock);
-
-
-	    // Read initial message from server
-	    read(sock, buffer, BUFFER_SIZE);
-	    printf("%s", buffer);
 	    
-	    
-	     // Main loop to check for user input
-    		while (1) {
-    			printf("Loading ~.~\n");
-    		}
-    		
-    		//**********************************************thread below
-    		// Wait for the update thread to finish
-    		//pthread_join(update_thread, NULL);
+		int bytes_received = recv(sock, buffer, BUFFER_SIZE,0);
+		printf("ASDFDSFDSFDS");
+        	if (bytes_received > 0) {
+        		printf("%s",buffer);
+        	}
+
+    // Main loop to check for user input or other operations
+    printf("Loading");
+    int i=0;
+    //while (1) {
+    //break;
+        
+        // Example: Handle user input or other tasks here
+    //}
+
 
     		// Close the socket
     		close(sock);
@@ -147,7 +141,3 @@ int main() {
 
 		return 0;
 }
-
-
-
-
