@@ -12,7 +12,7 @@
 #define MAX_CLIENTS 10
 #define secret "Kofiko"
 #define MAX_SALES 10
-#define password_DURATION 30  // 1 minute since we open the server
+#define password_DURATION 5  // 1 minute since we open the server
 
 typedef struct {
     int socket;
@@ -32,7 +32,9 @@ struct Sale {
 
 //help function
 void sendMenu(int clientSocket);
-void send_data(int clientSocket, char data[50]);
+void sending_data(int clientSocket, char data[50]);
+void getting_data(int clientSocket, char data[50]);
+int createWelcomeSocket(short port, int maxClient);
 
 
 //global parameters
@@ -42,7 +44,7 @@ int client_count = 0;
 int flg=0;
 time_t current_time,start_time,real_time;
 int remaining_time;
-
+int serverSocket;
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -68,8 +70,8 @@ int accept_bets(int server_fd) {
 	
    while (1) {
 
-        char dat[50] = "abcdefg";			//******HOW TO SEND DATA TO CLIENT
-	send_data(client->socket, dat);
+        //char dat[50] = "abcdefg";			//******HOW TO SEND DATA TO CLIENT
+	//sending_data(client->socket, dat);
         // Receive data from client if available
         printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
@@ -103,9 +105,14 @@ int accept_bets(int server_fd) {
 					printf("problem cause in menu we have only %d options and user 					choose number : %d \n", num_of_sales, numb_menu);
 				}
 				else
-				 break;
+				{
+				printf("username choose on menu the numb - %s\n", buffer);
+				char dat[50] = "371";
+				sending_data(client->socket, dat);				
+				break;
+				}
 			}
-			printf("username choose on menu the numb - %s\n", buffer);
+
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -117,8 +124,10 @@ int accept_bets(int server_fd) {
 		    
 		    }
 		    	else{	//username needed to be socket closed (maybe after 3 wrong)
-		    	printf("str1 and str2 are NOT equal - WEEEWOOOOWEEEEWOOOO\n");
-		   	 }
+			sending_data(client->socket,"worng password i call to the police WEEWOOWEEOO\n");
+			close(server_fd);
+			return -1;
+	   	 }
 	    }
             else if(flg==0)
             {printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
@@ -147,7 +156,8 @@ int accept_bets(int server_fd) {
  		remaining_time = (int)difftime(start_time + password_DURATION, current_time);
 	 	printf("\rabord in:%d",remaining_time);
 		if (remaining_time <=0){
-			break;
+			//break;
+			return -1;
 		}
 	}
            return -1;
@@ -161,61 +171,24 @@ int accept_bets(int server_fd) {
 
 int main() {
 	real_time = time(NULL);
-    int server_fd;
-    struct sockaddr_in address;
-    int opt = 1;
-
-    // Create socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("Socket creation error");
-        return -1;
-    }
-    printf("Socket created successfully.\n");
-
-    // Set socket option to allow address reuse
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        perror("Setsockopt error");
-        close(server_fd);
-        return -1;
-    }
-    printf("Socket options set successfully.\n");
-
-    // Set address family (IPv4), IP to listen on all interfaces, and port number
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
-
-    // Bind the socket to the specified address
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
-        close(server_fd);
-        return -1;
-    }
-    printf("Socket bound successfully.\n");
-
-    // Set the socket to listen for incoming connections
-    if (listen(server_fd, 3) < 0) {
-        perror("Listen failed");
-        close(server_fd);
-        return -1;
-    }
     printf("Server is listening on port %d.\n", PORT);
 
 
     // Accept bets from clients
     while(1){
-    accept_bets(server_fd);
+    serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
+    accept_bets(serverSocket);
 	}
 
     // Close the server socket (unreachable in this loop)
-    close(server_fd);
+    close(serverSocket);
 
 
     return 0;
 }
 // Function to send menu to client
 
-void send_data(int clientSocket, char data[50]) {
+void sending_data(int clientSocket, char data[50]) {
 
 	int send_me = send(clientSocket, data, strlen(data), 0);
 	//send_me = recv(clientSocket, data, BUFFER_SIZE, 0);
@@ -224,6 +197,18 @@ void send_data(int clientSocket, char data[50]) {
 	  perror("send failed");
 	printf("sss");
    };
+
+
+void getting_data(int clientSocket, char data[50]){
+    int data_send = recv(clientSocket, data, BUFFER_SIZE,0);	//getting menu
+    if (data_send > 0) 
+   	 printf("this data delivered from the server:\n%s", data);
+    else
+	printf("Bad getting data\n");
+
+
+}
+
 
 
 void sendMenu(int clientSocket) {
@@ -261,6 +246,47 @@ int check_sale(struct Sale my_sale) {
 	 		printf("\rsale start in:%d",remaining_time);
 		}
 		return 1;
+}
+
+// Function to create and configure the welcome socket
+int createWelcomeSocket(short port, int maxClient){
+    int serverSocket, opt=1;
+    struct sockaddr_in serverAddr;
+    socklen_t server_size;
+
+    // Create TCP socket
+    serverSocket= socket(PF_INET,SOCK_STREAM,0);
+    if(serverSocket<0){
+        perror("socket failed");
+        return -1;
+    }
+    // Set socket options to reuse address and port
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,&opt, sizeof(opt))){
+        perror("socket option failed");
+        close(serverSocket);
+        return -1;
+    }
+    // Configure server address
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    server_size= sizeof(serverAddr);
+
+    // Bind server socket to address and port
+    if((bind(serverSocket,(struct sockaddr *)&serverAddr,server_size))<0) {
+        perror("binding failed");
+        close(serverSocket);
+        return -1;
+    }
+
+    // Start listening for client connections
+    printf("Server is listen to port %d and wait for new client...\n", port);
+    if((listen(serverSocket,maxClient))<0){
+        perror("listen failed");
+        close(serverSocket);
+        return -1;
+    }
+    return serverSocket;
 }
 
 
