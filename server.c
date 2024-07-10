@@ -302,5 +302,5 @@ void ceating_multicast(char multicast_ip[16]){
 //sending message to the  multicast group
 void sending_multicast(char mess[1024],int sock,struct sockaddr_in addr){	
 	int addrlen = sizeof(addr);
-	sendto(sock, mess, sizeof(mess), 0, (struct sockaddr*) &addr, sizeof(addr));
+	sendto(sock, mess, strlen(mess), 0, (struct sockaddr*) &addr, sizeof(addr));
 }
