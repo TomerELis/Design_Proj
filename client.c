@@ -34,6 +34,7 @@
 
 
 void getting_data(int sock, char buffer4[BUFFER_SIZE]);
+void sending_data(int sock, char buffer4[BUFFER_SIZE]);
 
 
 int main() {
@@ -85,7 +86,6 @@ int main() {
 	    char pass[50];  // Assuming passwords can be up to 49 characters long
 	    
 
-            getting_data(sock, buffer4);
 	    printf("Enter username: ");
 	    scanf("%49s", user);  // Read up to 49 characters for username (prevent buffer overflow)
 	    
@@ -135,29 +135,49 @@ int main() {
     printf("Loading\n");
     int i=0;
     char num_menu[50];
-    while (1) {
+    while (1) {			//LOOP TO MENU STAGE
             	getting_data(sock, buffer4);
-		getting_data(sock, buffer4);
+		// Clear buffer to ensure no garbage data is sent
+		int buffer_numb = atoi(buffer4);
+	    	memset(buffer4, 0, BUFFER_SIZE);
+		if (buffer_numb == 371 )
+		{
+		printf("the server accept your request to join the sale\n");
+		break;
+		}
+		else if (buffer_numb == -1)
+		{
+		printf("the server accept you request to leave\n");
+		break;
+		}
         	
 
 		printf("Choose menu number ");
 	    	scanf("%49s",num_menu ); 
 
  		// Clear buffer to ensure no garbage data is sent
-	    	memset(buffer, 0, BUFFER_SIZE);
+	    	memset(buffer4, 0, BUFFER_SIZE);
 
-	     // Format data to send to the server
-	    snprintf(buffer3, BUFFER_SIZE, "%s", num_menu); 
+	     	// Format data to send to the server
+	    	snprintf(buffer4, BUFFER_SIZE, "%s", num_menu); 
 		 // Send data to the server
-	    ssize_t bytes_sent = send(sock, num_menu, strlen(buffer3), 0);
-	    if (bytes_sent < 0) {
-		perror("send failed");
-		close(sock);
-		return -1;
-	    }
+		sending_data(sock, num_menu);
+
+
+	    //ssize_t bytes_sent = send(sock, num_menu, strlen(buffer4), 0);
+	    //if (bytes_sent < 0) {
+		//perror("send failed");
+		//close(sock);
+		//return -1;
+	    //}
         
 
     }
+	
+	while(1){			//LOOP FOR SALE
+		//sending_data(sock, num_menu);		
+		//getting_data(sock, buffer4);
+	}
 
 
     		// Close the socket
@@ -171,11 +191,20 @@ int main() {
 
 
 void getting_data(int sock, char buffer4[BUFFER_SIZE]){
-    int data_recieved = recv(sock, buffer4, BUFFER_SIZE,0);	//getting menu
+    int data_recieved = recv(sock, buffer4, BUFFER_SIZE,0);	//getting menu numb
     if (data_recieved > 0) 
-   	 printf("this data delivered from the server:\n%s", buffer4);
+   	 printf("this data delivered from the server:\n%s\n", buffer4);
     else
 	printf("Bad getting data\n");
 
 
 }
+
+void sending_data(int sock, char buffer4[BUFFER_SIZE]){
+
+	int send_me = send(sock, buffer4, strlen(buffer4), 0);
+
+	if (send_me < 0) 
+	  perror("send failed");
+	printf("sss");
+   };

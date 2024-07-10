@@ -27,12 +27,13 @@ struct Sale {
     char title[50];  // Assuming titles can be up to 50 characters long
     char multicast_ip[50], data[50];
     int num_of_clients;
-    int star_time;
+    time_t star_time;
 };
 
 //help function
 void sendMenu(int clientSocket);
-void send_data(int clientSocket, char data[50]);
+void sending_data(int clientSocket, char data[50]);
+void getting_data(int clientSocket, char data[50]);
 
 
 //global parameters
@@ -40,9 +41,9 @@ int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 int flg=0;
-time_t current_time,start_time;
+time_t current_time,start_time,real_time;
 int remaining_time;
-int real_time = time(NULL)	
+
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
@@ -68,8 +69,8 @@ int accept_bets(int server_fd) {
 	
    while (1) {
 
-        //char dat[50] = "abcdefg";			******HOW TO SEND DATA TO CLIENT
-	//send_data(client->socket, dat);
+        //char dat[50] = "abcdefg";			//******HOW TO SEND DATA TO CLIENT
+	//sending_data(client->socket, dat);
         // Receive data from client if available
         printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
@@ -103,9 +104,14 @@ int accept_bets(int server_fd) {
 					printf("problem cause in menu we have only %d options and user 					choose number : %d \n", num_of_sales, numb_menu);
 				}
 				else
-				 break;
+				{
+				printf("username choose on menu the numb - %s\n", buffer);
+				char dat[50] = "371";
+				sending_data(client->socket, dat);				
+				break;
+				}
 			}
-			printf("username choose on menu the numb - %s\n", buffer);
+
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -151,15 +157,16 @@ int accept_bets(int server_fd) {
 		}
 	}
            return -1;
+		}
+	}
 }
-        
-
 
     
 
 
 
 int main() {
+	real_time = time(NULL);
     int server_fd;
     struct sockaddr_in address;
     int opt = 1;
@@ -214,7 +221,7 @@ int main() {
 }
 // Function to send menu to client
 
-void send_data(int clientSocket, char data[50]) {
+void sending_data(int clientSocket, char data[50]) {
 
 	int send_me = send(clientSocket, data, strlen(data), 0);
 	//send_me = recv(clientSocket, data, BUFFER_SIZE, 0);
@@ -225,13 +232,25 @@ void send_data(int clientSocket, char data[50]) {
    };
 
 
+void getting_data(int clientSocket, char data[50]){
+    int data_send = recv(clientSocket, data, BUFFER_SIZE,0);	//getting menu
+    if (data_send > 0) 
+   	 printf("this data delivered from the server:\n%s", data);
+    else
+	printf("Bad getting data\n");
+
+
+}
+
+
+
 void sendMenu(int clientSocket) {
 
     struct Sale sales[MAX_SALES] = {
-        {1, "Summer Sale","224.2.1.1",0,60*5},
-        {2, "Back to School Sale","224.2.2.1",0,60*1},
-        {3, "Holiday Sale","224.2.3.1",0,60*7},
-        {4, "End of Year Clearance","224.2.4.1",0,60*9},
+        {1, "Summer Sale","224.2.1.1",0,220},
+        {2, "Back to School Sale","224.2.2.1",0,60},
+        {3, "Holiday Sale","224.2.3.1",0,215},
+        {4, "End of Year Clearance","224.2.4.1",0,120},
         {-1, "Exit","0.0.0.0",0,0}
     };
 
@@ -253,14 +272,13 @@ void sendMenu(int clientSocket) {
 }
 
 // Function to mange sale
-void check_sale(struct Sale my_sale) {
+int check_sale(struct Sale my_sale) {
 		current_time = time(NULL);
- 		remaining_time = (int)difftime(real_time + my_sale->star_time, current_time);
+ 		remaining_time = (int)difftime(real_time + my_sale.star_time, current_time);
 		if(remaining_time >0){
 	 		printf("\rsale start in:%d",remaining_time);
-		}else{
-			//start sale
-
 		}
-		
+		return 1;
 }
+
+
