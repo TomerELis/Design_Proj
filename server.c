@@ -32,8 +32,10 @@ struct Sale {
 
 //help function
 void sendMenu(int clientSocket);
-void send_data(int clientSocket, char data[50]);
+void sending_data(int clientSocket, char data[50]);
+void getting_data(int clientSocket, char data[50]);
 int createWelcomeSocket(short port, int maxClient);
+
 
 //global parameters
 int num_of_sales = 4;
@@ -51,8 +53,7 @@ int accept_bets(int server_fd) {
     char buffer[BUFFER_SIZE] = {0};
     ssize_t bytes_received,bytes_received_sale;
     Client *client = (Client *)malloc(sizeof(Client));
-
-    //server_fd = createWelcomeSocket(PORT,MAX_CLIENTS);
+    
     new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
         //insert thread
         
@@ -67,13 +68,12 @@ int accept_bets(int server_fd) {
             printf("Client %d connected.\n", client->client_id);
         }
 	
-	//printf("bob the builder\n");
    while (1) {
-	
-        char dat[50] = "abcdefg";			//******HOW TO SEND DATA TO CLIENT
-	send_data(client->socket, dat);
+
+        //char dat[50] = "abcdefg";			//******HOW TO SEND DATA TO CLIENT
+	//sending_data(client->socket, dat);
         // Receive data from client if available
-        //printf("!!!!!!!!!\n");
+        printf("!!!!!!!!!\n");
         bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
             buffer[bytes_received] = '\0';  // Null-terminate the received data
@@ -105,9 +105,14 @@ int accept_bets(int server_fd) {
 					printf("problem cause in menu we have only %d options and user 					choose number : %d \n", num_of_sales, numb_menu);
 				}
 				else
-				 break;
+				{
+				printf("username choose on menu the numb - %s\n", buffer);
+				char dat[50] = "371";
+				sending_data(client->socket, dat);				
+				break;
+				}
 			}
-			printf("username choose on menu the numb - %s\n", buffer);
+
 	   		/*char menu[40]= "POPO_SHMOPO_IN_THE_HOUSE";
 	    		ssize_t menu_send = send(client->socket, menu, strlen(menu), 0);
 	    		if (menu_send < 0) {
@@ -119,10 +124,10 @@ int accept_bets(int server_fd) {
 		    
 		    }
 		    	else{	//username needed to be socket closed (maybe after 3 wrong)
-			send_data(client->socket,"worng password i call to the police WEEWOOWEEOO\n");
+			sending_data(client->socket,"worng password i call to the police WEEWOOWEEOO\n");
 			close(server_fd);
 			return -1;
-		   	 }
+	   	 }
 	    }
             else if(flg==0)
             {printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
@@ -166,38 +171,44 @@ int accept_bets(int server_fd) {
 
 int main() {
 	real_time = time(NULL);
-    int server_fd;
-    struct sockaddr_in address;
-    int opt = 1;
-
-
-    
     printf("Server is listening on port %d.\n", PORT);
 
 
     // Accept bets from clients
     while(1){
-    serverSocket = createWelcomeSocket(PORT,MAX_CLIENTS);
+    serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
     accept_bets(serverSocket);
 	}
 
     // Close the server socket (unreachable in this loop)
-    close(server_fd);
+    close(serverSocket);
 
 
     return 0;
 }
 // Function to send menu to client
 
-void send_data(int clientSocket, char data[50]) {
+void sending_data(int clientSocket, char data[50]) {
 
 	int send_me = send(clientSocket, data, strlen(data), 0);
 	//send_me = recv(clientSocket, data, BUFFER_SIZE, 0);
 
 	if (send_me < 0) 
 	  perror("send failed");
-	
+	printf("sss");
    };
+
+
+void getting_data(int clientSocket, char data[50]){
+    int data_send = recv(clientSocket, data, BUFFER_SIZE,0);	//getting menu
+    if (data_send > 0) 
+   	 printf("this data delivered from the server:\n%s", data);
+    else
+	printf("Bad getting data\n");
+
+
+}
+
 
 
 void sendMenu(int clientSocket) {
@@ -235,23 +246,6 @@ int check_sale(struct Sale my_sale) {
 	 		printf("\rsale start in:%d",remaining_time);
 		}
 		return 1;
-}
-
-// Function to clean up and exit server
-int exitAll(int maxOpen, int server, int* client, char** user, struct sockaddr_in* addr,char* data){
-    int k=0;
-    for(k=0;k<maxOpen;k++){
-        if(client[k]!=0){
-            close(client[k]);
-        }
-        free(user[k]);
-    }
-    close(server);
-    free(client);
-    free(addr);
-    free(user);
-    free(data);
-    return 0;
 }
 
 // Function to create and configure the welcome socket
@@ -293,4 +287,20 @@ int createWelcomeSocket(short port, int maxClient){
         return -1;
     }
     return serverSocket;
+}
+
+//creating multicast group
+void ceating_multicast(char multicast_ip[16]){
+	
+	struct sockaddr_in addr;
+	int sock = socket(AF_INET, SOCK_DGRAM, 0);
+	addr.sin_family= AF_INET; 
+	addr.sin_addr.s_addr= inet_addr(multicast_ip);
+	addr.sin_port= htons(6000); 
+}
+
+//sending message to the  multicast group
+void sending_multicast(char mess[1024],int sock,struct sockaddr_in addr){	
+	int addrlen = sizeof(addr);
+	sendto(sock, mess, sizeof(mess), 0, (struct sockaddr*) &addr, sizeof(addr));
 }
