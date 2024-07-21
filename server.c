@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <time.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
@@ -37,12 +38,13 @@ void sending_data(int clientSocket, const char *data);
 void getting_data(int clientSocket, char data[BUFFER_SIZE]);
 int createWelcomeSocket(short port, int maxClient);
 void send_multicast_message(const char* multicast_ip, const char* message);
+void *handle_client(void *client_ptr);
 
 // Global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
-int flg = 0;
+pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 time_t current_time, start_time, real_time;
 int remaining_time;
 int serverSocket;
@@ -54,34 +56,19 @@ struct Sale sales[MAX_SALES] = {
     {-1, "Exit", "0.0.0.0", "Exit data", 0, 0}
 };
 
-int accept_bets(int server_fd) {
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
-    int new_socket;
+void *handle_client(void *client_ptr) {
+    Client *client = (Client *)client_ptr;
     char buffer[BUFFER_SIZE] = {0};
     ssize_t bytes_received, bytes_received_sale;
-    Client *client = (Client *)malloc(sizeof(Client));
-    
-    new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
-    // Insert thread
-        
-    if (new_socket >= 0) {
-        client->socket = new_socket;
-        client->address = address;
-        client->client_id = client_count++;
-        memset(client->comments, 0, BUFFER_SIZE);
+    int flg = 0;
 
-        clients[client->client_id] = client;
-        printf("Client %d connected.\n", client->client_id);
-    }
-	
     while (1) {
-        printf("!!!!!!!!!\n");
-        bytes_received = recv(new_socket, buffer, BUFFER_SIZE, 0);
+        printf("Handling client %d\n", client->client_id);
+        bytes_received = recv(client->socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
             buffer[bytes_received] = '\0';  // Null-terminate the received data
             if (flg == 1) {
-                printf("Password use the secret password %d: %s\n", client_count - 1, buffer);
+                printf("Password use the secret password %d: %s\n", client->client_id, buffer);
                 flg = 0;
                 int result = strcmp(secret, buffer);
                 if (result == 0) { // username entered the right password
@@ -91,7 +78,7 @@ int accept_bets(int server_fd) {
                     while (1) { // while user chooses the right menu number
                         sendMenu(client->socket);
                         memset(buffer, 0, BUFFER_SIZE);
-                        bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
+                        bytes_received_sale = recv(client->socket, buffer, BUFFER_SIZE, 0);
                         int numb_menu = atoi(buffer);
                         if (numb_menu > num_of_sales || numb_menu <= 0) {
                             printf("problem cause in menu we have only %d options and user chose number : %d \n", num_of_sales, numb_menu);
@@ -118,31 +105,23 @@ int accept_bets(int server_fd) {
                     }
                 } else { // username needed to be socket closed (maybe after 3 wrong)
                     sending_data(client->socket, "wrong password i call to the police WEEWOOWEEOO\n");
-                    close(server_fd);
-                    return -1;
+                    close(client->socket);
+                    pthread_exit(NULL);
                 }
             } else if (flg == 0) {
-                printf("Received offer to username from client %d: %s\n", client_count - 1, buffer);
+                printf("Received offer to username from client %d: %s\n", client->client_id, buffer);
                 strncpy(client->user_name, buffer, BUFFER_SIZE);
                 flg = 1;
             }
-            strncpy(clients[client_count - 1]->comments, buffer, BUFFER_SIZE);
+            strncpy(clients[client->client_id]->comments, buffer, BUFFER_SIZE);
         } else if (bytes_received == 0) {
-            printf("Client %d disconnected\n", client_count - 1);
-            close(new_socket);
+            printf("Client %d disconnected\n", client->client_id);
+            close(client->socket);
+            pthread_exit(NULL);
         } else {
-            close(new_socket);
+            close(client->socket);
             perror("Receive failed");
-            start_time = time(NULL);
-            while (1) {
-                current_time = time(NULL);
-                remaining_time = (int)difftime(start_time + password_DURATION, current_time);
-                printf("\rabord in:%d", remaining_time);
-                if (remaining_time <= 0) {
-                    return -1;
-                }
-            }
-            return -1;
+            pthread_exit(NULL);
         }
     }
 }
@@ -175,10 +154,36 @@ void send_multicast_message(const char* multicast_ip, const char* message) {
 int main() {
     real_time = time(NULL);
     printf("Server is listening on port %d.\n", PORT);
+
+    serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
+
     while (1) {
-        serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
-        accept_bets(serverSocket);
+        struct sockaddr_in address;
+        int addrlen = sizeof(address);
+        int new_socket = accept(serverSocket, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+
+        if (new_socket >= 0) {
+            Client *client = (Client *)malloc(sizeof(Client));
+            client->socket = new_socket;
+            client->address = address;
+
+            pthread_mutex_lock(&client_mutex);
+            client->client_id = client_count++;
+            clients[client->client_id] = client;
+            pthread_mutex_unlock(&client_mutex);
+
+            printf("Client %d connected.\n", client->client_id);
+
+            pthread_t client_thread;
+            if (pthread_create(&client_thread, NULL, handle_client, (void *)client) != 0) {
+                perror("Failed to create client thread");
+            }
+            pthread_detach(client_thread);  // Automatically reclaim resources when the thread terminates
+        } else {
+            perror("accept failed");
+        }
     }
+
     close(serverSocket);
     return 0;
 }

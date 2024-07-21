@@ -157,6 +157,7 @@ int main() {
         if (pthread_create(&multicast_thread, NULL, receive_multicast, &m_info) != 0) {
             perror("Failed to create multicast receiver thread");
         }
+        pthread_detach(multicast_thread);  // Automatically reclaim resources when the thread terminates
     }
 
     while (1) {            // LOOP FOR SALE
@@ -196,6 +197,14 @@ void *receive_multicast(void *arg) {
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket creation failed");
+        pthread_exit(NULL);
+    }
+
+    // Allow multiple sockets to use the same PORT number
+    unsigned int yes = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+        perror("Reusing ADDR failed");
+        close(sockfd);
         pthread_exit(NULL);
     }
 
