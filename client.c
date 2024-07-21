@@ -98,6 +98,17 @@ int main() {
 
     // Main loop to check for user input or other operations
     printf("Loading\n");
+
+    // Wait for the server's response after sending the password
+    getting_data(sock, buffer4);
+
+    // Check the server's response
+    if (strstr(buffer4, "wrong password") != NULL) {
+        printf("Server response: %s\n", buffer4);
+        close(sock);
+        return 0;  // Exit the program if the password is wrong
+    }
+
     while (1) {            // LOOP TO MENU STAGE
         getting_data(sock, buffer4);
         // Clear buffer to ensure no garbage data is sent
@@ -149,4 +160,3 @@ void sending_data(int sock, char buffer4[BUFFER_SIZE]) {
         perror("send failed");
     printf("sss");
 }
-
