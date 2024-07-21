@@ -25,36 +25,45 @@ typedef struct {
 struct Sale {
     int id;
     char title[50];  // Assuming titles can be up to 50 characters long
-    char multicast_ip[50], data[50];
+    char multicast_ip[50];
+    char data[50];
     int num_of_clients;
     time_t star_time;
 };
 
-//help function
+// Helper functions
 void sendMenu(int clientSocket);
 void sending_data(int clientSocket, const char *data);
 void getting_data(int clientSocket, char data[BUFFER_SIZE]);
 int createWelcomeSocket(short port, int maxClient);
+void send_multicast_message(const char* multicast_ip, const char* message);
 
-//global parameters
+// Global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
-int flg=0;
-time_t current_time,start_time,real_time;
+int flg = 0;
+time_t current_time, start_time, real_time;
 int remaining_time;
 int serverSocket;
+struct Sale sales[MAX_SALES] = {
+    {1, "Summer Sale", "224.2.1.1", "Summer sale data", 0, 220},
+    {2, "Back to School Sale", "224.2.2.1", "Back to school data", 0, 60},
+    {3, "Holiday Sale", "224.2.3.1", "Holiday sale data", 0, 215},
+    {4, "End of Year Clearance", "224.2.4.1", "End of year data", 0, 120},
+    {-1, "Exit", "0.0.0.0", "Exit data", 0, 0}
+};
 
 int accept_bets(int server_fd) {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     int new_socket;
     char buffer[BUFFER_SIZE] = {0};
-    ssize_t bytes_received,bytes_received_sale;
+    ssize_t bytes_received, bytes_received_sale;
     Client *client = (Client *)malloc(sizeof(Client));
     
     new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
-    //insert thread
+    // Insert thread
         
     if (new_socket >= 0) {
         client->socket = new_socket;
@@ -77,18 +86,33 @@ int accept_bets(int server_fd) {
                 int result = strcmp(secret, buffer);
                 if (result == 0) { // username entered the right password
                     printf("username entered the right pass - %s\n", buffer);
+                    sending_data(client->socket, "Authentication successful. Please choose a menu number.\n");
                     sleep(2);
                     while (1) { // while user chooses the right menu number
                         sendMenu(client->socket);
                         memset(buffer, 0, BUFFER_SIZE);
                         bytes_received_sale = recv(new_socket, buffer, BUFFER_SIZE, 0);
                         int numb_menu = atoi(buffer);
-                        if (numb_menu > num_of_sales) {
+                        if (numb_menu > num_of_sales || numb_menu <= 0) {
                             printf("problem cause in menu we have only %d options and user chose number : %d \n", num_of_sales, numb_menu);
+                            sending_data(client->socket, "Invalid menu option. Please try again.\n");
                         } else {
                             printf("username chose on menu the number - %s\n", buffer);
-                            char dat[50] = "371";
-                            sending_data(client->socket, dat);				
+                            char dat[BUFFER_SIZE];
+                            snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\n", sales[numb_menu - 1].multicast_ip);
+                            sending_data(client->socket, dat);
+
+                            // Ask the server operator if they want to start the sale
+                            char start_sale[BUFFER_SIZE];
+                            printf("Do you want to start the sale for '%s'? (yes/no): ", sales[numb_menu - 1].title);
+                            fgets(start_sale, BUFFER_SIZE, stdin);
+                            start_sale[strcspn(start_sale, "\n")] = '\0'; // Remove newline character
+
+                            if (strcmp(start_sale, "yes") == 0) {
+                                send_multicast_message(sales[numb_menu - 1].multicast_ip, "Sale has started! Join the multicast group.");
+                            } else {
+                                printf("Sale not started.\n");
+                            }
                             break;
                         }
                     }
@@ -123,6 +147,31 @@ int accept_bets(int server_fd) {
     }
 }
 
+void send_multicast_message(const char* multicast_ip, const char* message) {
+    int sockfd;
+    struct sockaddr_in multicast_addr;
+    int multicast_port = 12345;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&multicast_addr, 0, sizeof(multicast_addr));
+    multicast_addr.sin_family = AF_INET;
+    multicast_addr.sin_addr.s_addr = inet_addr(multicast_ip);
+    multicast_addr.sin_port = htons(multicast_port);
+
+    if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
+        perror("sendto failed");
+    } else {
+        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
+    }
+
+    close(sockfd);
+}
+
 int main() {
     real_time = time(NULL);
     printf("Server is listening on port %d.\n", PORT);
@@ -150,14 +199,6 @@ void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
 }
 
 void sendMenu(int clientSocket) {
-    struct Sale sales[MAX_SALES] = {
-        {1, "Summer Sale", "224.2.1.1", 0, 220},
-        {2, "Back to School Sale", "224.2.2.1", 0, 60},
-        {3, "Holiday Sale", "224.2.3.1", 0, 215},
-        {4, "End of Year Clearance", "224.2.4.1", 0, 120},
-        {-1, "Exit", "0.0.0.0", 0, 0}
-    };
-
     char Mbuffer[BUFFER_SIZE]; // Buffer to hold serialized menu data
     memset(Mbuffer, 0, sizeof(Mbuffer)); // Clear buffer
 

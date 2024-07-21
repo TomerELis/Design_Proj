@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-
 #include <pthread.h>
 
 #define BUFFER_SIZE 1024
@@ -18,6 +17,12 @@
 // Prototype declarations
 void getting_data(int sock, char buffer4[BUFFER_SIZE]);
 void sending_data(int sock, char buffer4[BUFFER_SIZE]);
+void *receive_multicast(void *arg);
+
+typedef struct {
+    char multicast_ip[50];
+    int multicast_port;
+} multicast_info;
 
 int main() {
     int sock = 0;
@@ -107,6 +112,8 @@ int main() {
         printf("Server response: %s\n", buffer4);
         close(sock);
         return 0;  // Exit the program if the password is wrong
+    } else if (strstr(buffer4, "Authentication successful") != NULL) {
+        printf("Server response: %s\n", buffer4);
     }
 
     while (1) {            // LOOP TO MENU STAGE
@@ -132,6 +139,24 @@ int main() {
         snprintf(buffer4, BUFFER_SIZE, "%s", num_menu); 
         // Send data to the server
         sending_data(sock, num_menu);
+
+        // Get multicast IP from the server
+        getting_data(sock, buffer4);
+        printf("Multicast IP received from the server: %s\n", buffer4);
+
+        // Extract multicast IP from the received data
+        char multicast_ip[50];
+        sscanf(buffer4, "Multicast IP: %49s", multicast_ip);
+
+        // Create a thread to receive multicast messages
+        multicast_info m_info;
+        strncpy(m_info.multicast_ip, multicast_ip, 50);
+        m_info.multicast_port = 12345;
+
+        pthread_t multicast_thread;
+        if (pthread_create(&multicast_thread, NULL, receive_multicast, &m_info) != 0) {
+            perror("Failed to create multicast receiver thread");
+        }
     }
 
     while (1) {            // LOOP FOR SALE
@@ -160,3 +185,52 @@ void sending_data(int sock, char buffer4[BUFFER_SIZE]) {
         perror("send failed");
     printf("sss");
 }
+
+void *receive_multicast(void *arg) {
+    multicast_info *m_info = (multicast_info *)arg;
+    int sockfd;
+    struct sockaddr_in multicast_addr;
+    struct ip_mreq mreq;
+    char buffer[BUFFER_SIZE];
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket creation failed");
+        pthread_exit(NULL);
+    }
+
+    memset(&multicast_addr, 0, sizeof(multicast_addr));
+    multicast_addr.sin_family = AF_INET;
+    multicast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    multicast_addr.sin_port = htons(m_info->multicast_port);
+
+    if (bind(sockfd, (struct sockaddr *)&multicast_addr, sizeof(multicast_addr)) < 0) {
+        perror("bind failed");
+        close(sockfd);
+        pthread_exit(NULL);
+    }
+
+    mreq.imr_multiaddr.s_addr = inet_addr(m_info->multicast_ip);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+
+    if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
+        perror("setsockopt failed");
+        close(sockfd);
+        pthread_exit(NULL);
+    }
+
+    while (1) {
+        int nbytes = recv(sockfd, buffer, BUFFER_SIZE, 0);
+        if (nbytes < 0) {
+            perror("recv failed");
+            close(sockfd);
+            pthread_exit(NULL);
+        }
+        buffer[nbytes] = '\0';
+        printf("Received multicast message: %s\n", buffer);
+    }
+
+    close(sockfd);
+    pthread_exit(NULL);
+}
+
