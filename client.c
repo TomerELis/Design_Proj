@@ -113,13 +113,12 @@ int main() {
         // Send the chosen menu number to the server
         sending_data(sock, num_menu);
 
-        // Receive multicast IP from the server
+        // Receive multicast IP and port from the server
         getting_data(sock, buffer);
-        printf("Multicast IP received from the server: %s\n", buffer);
+        printf("Multicast IP and port received from the server: %s\n", buffer);
 
-        // Extract multicast IP from the received data
-        sscanf(buffer, "Multicast IP: %49s", m_info.multicast_ip);
-        m_info.multicast_port = 12345;
+        // Extract multicast IP and port from the received data
+        sscanf(buffer, "Multicast IP: %49s\nPort: %d", m_info.multicast_ip, &m_info.multicast_port);
 
         // Create a thread to receive multicast messages
         if (pthread_create(&multicast_thread, NULL, receive_multicast, &m_info) != 0) {
@@ -183,8 +182,8 @@ void *receive_multicast(void *arg) {
     // Set up the local address structure
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on any local address
-    local_addr.sin_port = htons(m_info->multicast_port);
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    local_addr.sin_port = htons(m_info->multicast_port);  // Use the dynamic port
 
     // Bind the socket to the local address and port
     if (bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
@@ -195,7 +194,7 @@ void *receive_multicast(void *arg) {
 
     // Join the multicast group
     mreq.imr_multiaddr.s_addr = inet_addr(m_info->multicast_ip);
-    mreq.imr_interface.s_addr = htonl(INADDR_ANY);  // Use the default interface
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
         perror("setsockopt failed");
         close(sockfd);

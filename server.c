@@ -14,7 +14,6 @@
 #define secret "Kofiko"
 #define MAX_SALES 10
 #define MAX_ITEMS 5  // Maximum number of items per sale
-#define password_DURATION 5  // 1 minute since we open the server
 
 typedef struct {
     char name[50];
@@ -33,6 +32,7 @@ typedef struct {
     time_t star_time;
     Item items[MAX_ITEMS];  // Array of items in this sale
     int num_of_items;  // Number of items in this sale
+    int multicast_port;  // Unique port for each sale
 } Sale;
 
 typedef struct {
@@ -49,7 +49,7 @@ void sendMenu(int clientSocket);
 void sending_data(int clientSocket, const char *data);
 void getting_data(int clientSocket, char data[BUFFER_SIZE]);
 int createWelcomeSocket(short port, int maxClient);
-void send_multicast_message(const char* multicast_ip, const char* message);
+void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message);
 void *handle_client(void *client_ptr);
 void *command_handler(void *arg);
 void generate_items_for_sale(Sale *sale);
@@ -65,11 +65,11 @@ time_t current_time, start_time, real_time;
 int remaining_time;
 int serverSocket;
 Sale sales[MAX_SALES] = {
-    {1, "Summer Sale", "224.2.1.1", "Summer sale data", 0, 0, 220},
-    {2, "Back to School Sale", "224.2.2.1", "Back to school data", 0, 0, 60},
-    {3, "Holiday Sale", "224.2.3.1", "Holiday sale data", 0, 0, 215},
-    {4, "End of Year Clearance", "224.2.4.1", "End of year data", 0, 0, 120},
-    {-1, "Exit", "0.0.0.0", "Exit data", 0, 0, 0}
+    {1, "Summer Sale", "224.2.1.1", "Summer sale data", 0, 0, 220, {{0}}, 0, 12345},
+    {2, "Back to School Sale", "224.2.2.1", "Back to school data", 0, 0, 60, {{0}}, 0, 12346},
+    {3, "Holiday Sale", "224.2.3.1", "Holiday sale data", 0, 0, 215, {{0}}, 0, 12347},
+    {4, "End of Year Clearance", "224.2.4.1", "End of year data", 0, 0, 120, {{0}}, 0, 12348},
+    {-1, "Exit", "0.0.0.0", "Exit data", 0, 0, 0, {{0}}, 0, 0}
 };
 
 // Function definitions
@@ -164,11 +164,11 @@ void *handle_client(void *client_ptr) {
                             client->selected_sale = numb_menu;  // Track the sale selected by the client
                             pthread_mutex_unlock(&client_mutex);
 
-                            // Send the correct multicast IP to the client
+                            // Send the correct multicast IP and port to the client
                             char dat[BUFFER_SIZE];
-                            snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\n", sales[client->selected_sale - 1].multicast_ip);
+                            snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\nPort: %d\n", sales[client->selected_sale - 1].multicast_ip, sales[client->selected_sale - 1].multicast_port);
                             sending_data(client->socket, dat);
-                            break;  // Exit after sending the multicast IP to the client
+                            break;  // Exit after sending the multicast IP and port to the client
                         }
                     }
                 } else { // wrong password
@@ -237,7 +237,7 @@ void *command_handler(void *arg) {
                             pthread_mutex_unlock(&client_mutex);
 
                             printf("Starting sale %d: %s\n", sale_number, sales[sale_number - 1].title);
-                            send_multicast_message(sales[sale_number - 1].multicast_ip, "Sale has started! Join the multicast group.");
+                            send_multicast_message(sales[sale_number - 1].multicast_ip, sales[sale_number - 1].multicast_port, "Sale has started! Join the multicast group.");
                         } else {
                             printf("Cannot start sale %d: %s. Not enough clients (need at least 2, currently %d).\n", sale_number, sales[sale_number - 1].title, num_clients);
                         }
@@ -254,11 +254,9 @@ void *command_handler(void *arg) {
     }
 }
 
-
-void send_multicast_message(const char* multicast_ip, const char* message) {
+void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message) {
     int sockfd;
     struct sockaddr_in multicast_addr;
-    int multicast_port = 12345;
 
     // Create a UDP socket
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -277,14 +275,12 @@ void send_multicast_message(const char* multicast_ip, const char* message) {
     if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
         perror("sendto failed");
     } else {
-        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
+        printf("Multicast message sent to %s:%d: %s\n", multicast_ip, multicast_port, message);
     }
 
     // Close the socket
     close(sockfd);
 }
-
-
 
 int main() {
     real_time = time(NULL);
