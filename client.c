@@ -39,11 +39,8 @@ int main() {
 
     // Set address family to IPv4
     serv_addr.sin_family = AF_INET;
-
-    // Set port number and convert to network byte order
     serv_addr.sin_port = htons(PORT);
     
-    // Convert IPv4 and IPv6 addresses from text to binary form
     if (inet_pton(AF_INET, IP, &serv_addr.sin_addr) <= 0) {
         printf("\nInvalid address/ Address not supported\n");
         return -1;
@@ -59,38 +56,27 @@ int main() {
     printf("Connected to server successfully.\n");
 
     // Send username
-    char user[50];  // Assuming usernames can be up to 49 characters long
-    char pass[50];  // Assuming passwords can be up to 49 characters long
+    char user[50];
+    char pass[50];
 
     printf("Enter username: ");
-    scanf("%49s", user);  // Read up to 49 characters for username (prevent buffer overflow)
+    scanf("%49s", user);
 
-    // Clear buffer to ensure no garbage data is sent
     memset(buffer, 0, BUFFER_SIZE);
-
-    // Format data to send to the server
     snprintf(buffer, BUFFER_SIZE, "%s\n", user);
-
-    // Send data to the server
-    ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
-    if (bytes_sent < 0) {
+    if (send(sock, buffer, strlen(buffer), 0) < 0) {
         perror("send failed");
         close(sock);
         return -1;
     }
 
+    // Send password
     printf("Enter password: ");
-    scanf("%49s", pass);  // Read up to 49 characters for password (prevent buffer overflow)
+    scanf("%49s", pass);
 
-    // Clear buffer to ensure no garbage data is sent
     memset(buffer, 0, BUFFER_SIZE);
-
-    // Format data to send to the server
     snprintf(buffer, BUFFER_SIZE, "%s", pass);
-
-    // Send data to the server
-    ssize_t pass_sent = send(sock, buffer, strlen(buffer), 0);
-    if (pass_sent < 0) {
+    if (send(sock, buffer, strlen(buffer), 0) < 0) {
         perror("send failed");
         close(sock);
         return -1;
@@ -102,6 +88,17 @@ int main() {
     getting_data(sock, buffer);
     printf("Server response: %s\n", buffer);
 
+    // Check server response for incorrect password
+    if (strstr(buffer, "Wrong password") != NULL) {
+        printf("Incorrect password. Closing connection.\n");
+        close(sock);
+        return 0;  // Exit the program
+    } else if (strstr(buffer, "Authentication successful") == NULL) {
+        printf("Unexpected response from server. Closing connection.\n");
+        close(sock);
+        return 0;  // Exit the program
+    }
+
     // Main loop to handle menu selection
     while (1) {
         getting_data(sock, buffer);
@@ -110,35 +107,26 @@ int main() {
         printf("Choose a sale number: ");
         scanf("%49s", num_menu);
 
-        // Send the chosen menu number to the server
         sending_data(sock, num_menu);
-
-        // Receive multicast IP and port from the server
         getting_data(sock, buffer);
-        printf("Multicast IP and Port received from the server: %s\n", buffer);
+        printf("Multicast IP received from the server: %s\n", buffer);
 
-        // Extract multicast IP and port from the received data
-        sscanf(buffer, "Multicast IP: %49s\nPort: %d", m_info.multicast_ip, &m_info.multicast_port);
+        sscanf(buffer, "Multicast IP: %49s\nPort: %d\n", m_info.multicast_ip, &m_info.multicast_port);
 
-        // Create a thread to receive multicast messages
         if (pthread_create(&multicast_thread, NULL, receive_multicast, &m_info) != 0) {
             perror("Failed to create multicast receiver thread");
         }
-        pthread_detach(multicast_thread);  // Automatically reclaim resources when the thread terminates
-        break;  // Exit after setting up the multicast listener
+        pthread_detach(multicast_thread);
+        break;
     }
 
     // The main loop keeps the connection open
     while (1) {
-        // Implement additional logic here, such as receiving specific commands or sending more data
-        // For now, just keep the connection open
         sleep(1);
     }
 
-    // The connection will only close when the user decides to exit the loop
     close(sock);
     printf("Connection closed.\n");
-
     return 0;
 }
 
@@ -146,7 +134,6 @@ void getting_data(int sock, char buffer[BUFFER_SIZE]) {
     int data_received = recv(sock, buffer, BUFFER_SIZE, 0);
     if (data_received > 0) {
         buffer[data_received] = '\0';
-        printf("%s", buffer);  // Display the received message, including money info
     } else {
         printf("Failed to receive data.\n");
     }
@@ -165,14 +152,12 @@ void *receive_multicast(void *arg) {
     struct ip_mreq mreq;
     char buffer[BUFFER_SIZE];
 
-    // Create a UDP socket
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket creation failed");
         pthread_exit(NULL);
     }
 
-    // Allow multiple sockets to use the same port number
     unsigned int yes = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
         perror("Reusing ADDR failed");
@@ -180,20 +165,17 @@ void *receive_multicast(void *arg) {
         pthread_exit(NULL);
     }
 
-    // Set up the local address structure
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     local_addr.sin_port = htons(m_info->multicast_port);
 
-    // Bind the socket to the local address and port
     if (bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
         perror("bind failed");
         close(sockfd);
         pthread_exit(NULL);
     }
 
-    // Join the multicast group
     mreq.imr_multiaddr.s_addr = inet_addr(m_info->multicast_ip);
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
@@ -202,7 +184,6 @@ void *receive_multicast(void *arg) {
         pthread_exit(NULL);
     }
 
-    // Receive messages from the multicast group
     while (1) {
         int nbytes = recv(sockfd, buffer, BUFFER_SIZE, 0);
         if (nbytes < 0) {
