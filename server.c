@@ -24,15 +24,15 @@ typedef struct {
 
 typedef struct {
     int id;
-    char title[50];  // Assuming titles can be up to 50 characters long
+    char title[50];
     char multicast_ip[50];
     char data[50];
-    int num_of_clients;  // Track the number of clients in this sale
-    int is_started;  // Flag to track if the sale has been started
+    int num_of_clients;
+    int is_started;
     time_t star_time;
-    Item items[MAX_ITEMS];  // Array of items in this sale
-    int num_of_items;  // Number of items in this sale
-    int multicast_port;  // Unique port for each sale
+    Item items[MAX_ITEMS];
+    int num_of_items;
+    int multicast_port;
 } Sale;
 
 typedef struct {
@@ -42,6 +42,7 @@ typedef struct {
     char user_name[BUFFER_SIZE];
     char comments[BUFFER_SIZE];
     int selected_sale;
+    double money; // Add money field
 } Client;
 
 // Function declarations
@@ -55,8 +56,8 @@ void *command_handler(void *arg);
 void generate_items_for_sale(Sale *sale);
 void print_items_table(Item *items, int num_items);
 int check_sale(Sale my_sale);
+void start_sale(Sale *sale);
 
-// Global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
@@ -102,8 +103,8 @@ void generate_items_for_sale(Sale *sale) {
 
     for (int i = 0; i < MAX_ITEMS; i++) {
         sale->items[i].id = i + 1;
-        snprintf(sale->items[i].type, sizeof(sale->items[i].type), "Type %d", i % 3 + 1);  // Example types
-        sale->items[i].start_price = (i + 1) * 10.0;  // Example starting price
+        snprintf(sale->items[i].type, sizeof(sale->items[i].type), "Type %d", i % 3 + 1);
+        sale->items[i].start_price = (i + 1) * 10.0;
     }
     sale->num_of_items = MAX_ITEMS;
 }
@@ -119,13 +120,25 @@ void print_items_table(Item *items, int num_items) {
     printf("+----+-----------------+-------+-------------+\n");
 }
 
-int check_sale(Sale my_sale) {
-    current_time = time(NULL);
-    remaining_time = (int)difftime(real_time + my_sale.star_time, current_time);
-    if (remaining_time > 0) {
-        printf("\rsale start in:%d", remaining_time);
-    }
-    return 1;
+void start_sale(Sale *sale) {
+    char message[BUFFER_SIZE];
+
+    snprintf(message, BUFFER_SIZE, "The sale started!");
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+
+    snprintf(message, BUFFER_SIZE, "The rule is simple: each one of you has 100$. There are %d items in this sale. Each item has a starting price. So think well before making offers!\n\nAh! There’s one more important rule: THE SPICE RULE: The second highest price wins!\n\nGood luck!", sale->num_of_items);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+
+    // Simulate a 30-second countdown
+    sleep(30);
+
+    // Clear the terminal screen for all clients in this multicast group
+    snprintf(message, BUFFER_SIZE, "\033[2J\033[H");  // ANSI escape code to clear the screen
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+
+    // Send the first item to the clients
+    snprintf(message, BUFFER_SIZE, "Item 1: %s (Starting price: $%.2f)", sale->items[0].name, sale->items[0].start_price);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
 }
 
 void *handle_client(void *client_ptr) {
@@ -133,6 +146,9 @@ void *handle_client(void *client_ptr) {
     char buffer[BUFFER_SIZE] = {0};
     ssize_t bytes_received, bytes_received_sale;
     int flg = 0;
+
+    // Initialize client money (e.g., each client starts with $100)
+    client->money = 100.0;
 
     while (1) {
         printf("Handling client %d\n", client->client_id);
@@ -145,7 +161,12 @@ void *handle_client(void *client_ptr) {
                 int result = strcmp(secret, buffer);
                 if (result == 0) { // username entered the right password
                     printf("username entered the right pass - %s\n", buffer);
-                    sending_data(client->socket, "Authentication successful. Please choose a menu number.\n");
+                    
+                    // Send money information to the client
+                    char money_message[BUFFER_SIZE];
+                    snprintf(money_message, BUFFER_SIZE, "Authentication successful. You have $%.2f. Please choose a menu number.\n", client->money);
+                    sending_data(client->socket, money_message);
+
                     sleep(2);
                     while (1) { // while user chooses the right menu number
                         sendMenu(client->socket);
@@ -223,29 +244,75 @@ void *command_handler(void *arg) {
                 char *command = strtok(command_buffer, " ");
                 char *sub_command = strtok(NULL, " ");
                 char *sale_number_str = strtok(NULL, " ");
+                int sale_number = 0;
 
-                if (command && sub_command && sale_number_str && strcmp(command, "/start") == 0 && strcmp(sub_command, "sale") == 0) {
-                    int sale_number = atoi(sale_number_str);  // Convert sale number from string to integer
-                    if (sale_number > 0 && sale_number <= num_of_sales) {
-                        pthread_mutex_lock(&client_mutex);
-                        int num_clients = sales[sale_number - 1].num_of_clients;
-                        pthread_mutex_unlock(&client_mutex);
+                if (sale_number_str) {
+                    sale_number = atoi(sale_number_str);  // Convert sale number from string to integer
+                }
 
-                        if (num_clients >= 2) {
-                            pthread_mutex_lock(&client_mutex);
-                            sales[sale_number - 1].is_started = 1;  // Mark the sale as started
-                            pthread_mutex_unlock(&client_mutex);
+                // Switch-case based on the command
+                switch (command[1]) { // Check the first character after '/'
+                    case 's': // Handle /start sale, /resume sale, /secret_command
+                        if (strcmp(command, "/start") == 0 && sub_command && strcmp(sub_command, "sale") == 0) {
+                            if (sale_number > 0 && sale_number <= num_of_sales) {
+                                pthread_mutex_lock(&client_mutex);
+                                int num_clients = sales[sale_number - 1].num_of_clients;
+                                pthread_mutex_unlock(&client_mutex);
 
-                            printf("Starting sale %d: %s\n", sale_number, sales[sale_number - 1].title);
-                            send_multicast_message(sales[sale_number - 1].multicast_ip, sales[sale_number - 1].multicast_port, "Sale has started! Join the multicast group.");
+                                if (num_clients >= 2) {
+                                    pthread_mutex_lock(&client_mutex);
+                                    if (sales[sale_number - 1].is_started == 0) {
+                                        sales[sale_number - 1].is_started = 1;  // Mark the sale as started
+                                        pthread_mutex_unlock(&client_mutex);
+
+                                        printf("Starting sale %d: %s\n", sale_number, sales[sale_number - 1].title);
+                                        start_sale(&sales[sale_number - 1]);
+                                    } else {
+                                        pthread_mutex_unlock(&client_mutex);
+                                        printf("Sale %d: %s has already started.\n", sale_number, sales[sale_number - 1].title);
+                                    }
+                                } else {
+                                    printf("Cannot start sale %d: %s. Not enough clients (need at least 2, currently %d).\n", sale_number, sales[sale_number - 1].title, num_clients);
+                                }
+                            } else {
+                                printf("Invalid sale number: %s\n", sale_number_str);
+                            }
+                        } else if (strcmp(command, "/resume") == 0 && sub_command && strcmp(sub_command, "sale") == 0) {
+                            if (sale_number > 0 && sale_number <= num_of_sales) {
+                                pthread_mutex_lock(&client_mutex);
+                                if (sales[sale_number - 1].is_started == 1) {
+                                    pthread_mutex_unlock(&client_mutex);
+                                    printf("Resuming sale %d: %s\n", sale_number, sales[sale_number - 1].title);
+                                    start_sale(&sales[sale_number - 1]);
+                                } else {
+                                    pthread_mutex_unlock(&client_mutex);
+                                    printf("Sale %d: %s has not started yet.\n", sale_number, sales[sale_number - 1].title);
+                                }
+                            } else {
+                                printf("Invalid sale number: %s\n", sale_number_str);
+                            }
+                        } else if (strcmp(command, "/secret_command") == 0) {
+                            printf("You have entered the secret command!\n");
                         } else {
-                            printf("Cannot start sale %d: %s. Not enough clients (need at least 2, currently %d).\n", sale_number, sales[sale_number - 1].title, num_clients);
+                            printf("Unknown command: %s\n", command_buffer);
                         }
-                    } else {
-                        printf("Invalid sale number: %s\n", sale_number_str);
-                    }
-                } else {
-                    printf("Unknown command: %s\n", command_buffer);
+                        break;
+
+                    case 'c': // Handle /commands
+                        if (strcmp(command, "/commands") == 0) {
+                            printf("Available commands:\n");
+                            printf("/start sale <sale_number> - Start a sale if there are enough clients.\n");
+                            printf("/resume sale <sale_number> - Resume a previously started sale.\n");
+                            printf("/secret_command - Execute a secret command.\n");
+                            printf("/commands - List all available commands.\n");
+                        } else {
+                            printf("Unknown command: %s\n", command_buffer);
+                        }
+                        break;
+
+                    default:
+                        printf("Unknown command: %s\n", command_buffer);
+                        break;
                 }
             } else {
                 printf("Invalid command format. Commands should start with '/'.\n");
@@ -274,12 +341,50 @@ void send_multicast_message(const char* multicast_ip, int multicast_port, const 
     // Send the multicast message
     if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
         perror("sendto failed");
-    } else {
-        printf("Multicast message sent to %s:%d: %s\n", multicast_ip, multicast_port, message);
     }
 
     // Close the socket
     close(sockfd);
+}
+
+int createWelcomeSocket(short port, int maxClient) {
+    int serverSocket, opt = 1;
+    struct sockaddr_in serverAddr;
+    socklen_t server_size;
+
+    // Create TCP socket
+    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
+    if (serverSocket < 0) {
+        perror("socket failed");
+        return -1;
+    }
+    // Set socket options to reuse address and port
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("socket option failed");
+        close(serverSocket);
+        return -1;
+    }
+    // Configure server address
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    server_size = sizeof(serverAddr);
+
+    // Bind server socket to address and port
+    if ((bind(serverSocket, (struct sockaddr *)&serverAddr, server_size)) < 0) {
+        perror("binding failed");
+        close(serverSocket);
+        return -1;
+    }
+
+    // Start listening for client connections
+    printf("Server is listening to port %d and waiting for new clients...\n", port);
+    if ((listen(serverSocket, maxClient)) < 0) {
+        perror("listen failed");
+        close(serverSocket);
+        return -1;
+    }
+    return serverSocket;
 }
 
 int main() {
@@ -335,7 +440,6 @@ void sending_data(int clientSocket, const char *data) {
     int send_me = send(clientSocket, data, strlen(data), 0);
     if (send_me < 0) 
         perror("send failed");
-    printf("sss");
 }
 
 void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
@@ -361,45 +465,5 @@ void sendMenu(int clientSocket) {
     if (succeed < 0) {
         perror("send failed");
     }
-}
-
-int createWelcomeSocket(short port, int maxClient) {
-    int serverSocket, opt = 1;
-    struct sockaddr_in serverAddr;
-    socklen_t server_size;
-
-    // Create TCP socket
-    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
-    if (serverSocket < 0) {
-        perror("socket failed");
-        return -1;
-    }
-    // Set socket options to reuse address and port
-    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("socket option failed");
-        close(serverSocket);
-        return -1;
-    }
-    // Configure server address
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    server_size = sizeof(serverAddr);
-
-    // Bind server socket to address and port
-    if ((bind(serverSocket, (struct sockaddr *)&serverAddr, server_size)) < 0) {
-        perror("binding failed");
-        close(serverSocket);
-        return -1;
-    }
-
-    // Start listening for client connections
-    printf("Server is listening to port %d and waiting for new clients...\n", port);
-    if ((listen(serverSocket, maxClient)) < 0) {
-        perror("listen failed");
-        close(serverSocket);
-        return -1;
-    }
-    return serverSocket;
 }
 

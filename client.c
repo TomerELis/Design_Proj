@@ -26,7 +26,7 @@ int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
     char buffer[BUFFER_SIZE] = {0};
-    char num_menu[BUFFER_SIZE];  // Changed to BUFFER_SIZE
+    char num_menu[BUFFER_SIZE];
     multicast_info m_info;
     pthread_t multicast_thread;
 
@@ -108,14 +108,14 @@ int main() {
         printf("%s", buffer);
 
         printf("Choose a sale number: ");
-        scanf("%49s", num_menu);  // Changed to BUFFER_SIZE
+        scanf("%49s", num_menu);
 
         // Send the chosen menu number to the server
         sending_data(sock, num_menu);
 
         // Receive multicast IP and port from the server
         getting_data(sock, buffer);
-        printf("Multicast IP and port received from the server: %s\n", buffer);
+        printf("Multicast IP and Port received from the server: %s\n", buffer);
 
         // Extract multicast IP and port from the received data
         sscanf(buffer, "Multicast IP: %49s\nPort: %d", m_info.multicast_ip, &m_info.multicast_port);
@@ -146,6 +146,7 @@ void getting_data(int sock, char buffer[BUFFER_SIZE]) {
     int data_received = recv(sock, buffer, BUFFER_SIZE, 0);
     if (data_received > 0) {
         buffer[data_received] = '\0';
+        printf("%s", buffer);  // Display the received message, including money info
     } else {
         printf("Failed to receive data.\n");
     }
@@ -183,7 +184,7 @@ void *receive_multicast(void *arg) {
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    local_addr.sin_port = htons(m_info->multicast_port);  // Use the dynamic port
+    local_addr.sin_port = htons(m_info->multicast_port);
 
     // Bind the socket to the local address and port
     if (bind(sockfd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
