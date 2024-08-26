@@ -26,14 +26,11 @@ typedef struct {
     int id;
     char title[50];
     char multicast_ip[50];
-    char data[50];
+    int multicast_port;  // Port for multicast communication
     int num_of_clients;
     int is_started;
-    time_t star_time;
     Item items[MAX_ITEMS];
     int num_of_items;
-    int multicast_port;
-    double money_capacity;  // New field for money capacity per sale
 } Sale;
 
 typedef struct {
@@ -41,9 +38,9 @@ typedef struct {
     struct sockaddr_in address;
     int client_id;
     char user_name[BUFFER_SIZE];
-    char comments[BUFFER_SIZE];
     int selected_sale;
-    double money;  // Amount of money the client has for the current sale
+    double money;
+    int bid_value;
 } Client;
 
 // Function declarations
@@ -56,22 +53,22 @@ void *handle_client(void *client_ptr);
 void *command_handler(void *arg);
 void generate_items_for_sale(Sale *sale);
 void print_items_table(Item *items, int num_items);
-int check_sale(Sale my_sale);
+void clear_client_screens(Sale *sale);
 void start_sale(Sale *sale);
+void handle_bidding(Sale *sale);
 
+// Global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
-time_t current_time, start_time, real_time;
-int remaining_time;
 int serverSocket;
 Sale sales[MAX_SALES] = {
-    {1, "Summer Sale", "224.2.1.1", "Summer sale data", 0, 0, 220, {{0}}, 0, 12345, 150.0},
-    {2, "Back to School Sale", "224.2.2.1", "Back to school data", 0, 0, 60, {{0}}, 0, 12346, 200.0},
-    {3, "Holiday Sale", "224.2.3.1", "Holiday sale data", 0, 0, 215, {{0}}, 0, 12347, 300.0},
-    {4, "End of Year Clearance", "224.2.4.1", "End of year data", 0, 0, 120, {{0}}, 0, 12348, 250.0},
-    {-1, "Exit", "0.0.0.0", "Exit data", 0, 0, 0, {{0}}, 0, 0, 0.0}
+    {1, "Summer Sale", "224.2.1.1", 12345, 0, 0, {{0}}, 0},
+    {2, "Back to School Sale", "224.2.2.1", 12346, 0, 0, {{0}}, 0},
+    {3, "Holiday Sale", "224.2.3.1", 12347, 0, 0, {{0}}, 0},
+    {4, "End of Year Clearance", "224.2.4.1", 12348, 0, 0, {{0}}, 0},
+    {-1, "Exit", "0.0.0.0", 0, 0, 0, {{0}}, 0}
 };
 
 // Function definitions
@@ -121,157 +118,208 @@ void print_items_table(Item *items, int num_items) {
     printf("+----+-----------------+-------+-------------+\n");
 }
 
-void start_sale(Sale *sale) {
-    char message[BUFFER_SIZE];
+void handle_bidding(Sale *sale) {
+    int highest_bid = 0;
+    int second_highest_bid = 0;
+    int winning_client_id = -1;
+    char buffer[BUFFER_SIZE] = {0};
+    int bets_received = 0;
 
-    snprintf(message, BUFFER_SIZE, "The sale started!");
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+    snprintf(buffer, BUFFER_SIZE, "Place your bids for item: %.20s (Starting price: %.2f$)\n", 
+             sale->items[sale->num_of_items - 1].name, sale->items[sale->num_of_items - 1].start_price);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
 
-    snprintf(message, BUFFER_SIZE, "The rule is simple: each one of you has %.2f$.\nThere are %d items in this sale. Each item has a starting price.\nSo think well before making offers!\n\nAh! There’s one more important rule: THE SPICE RULE: The second highest price wins!\n\nGood luck!", sale->money_capacity, sale->num_of_items);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
-
-    // Assign money to each client in this sale (no need to send multicast message repeatedly)
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
-            clients[i]->money = sale->money_capacity;  // Set client's money to the sale's capacity
+    while (bets_received < sale->num_of_clients) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+                int bytes_received = recv(clients[i]->socket, buffer, BUFFER_SIZE, 0);
+                if (bytes_received > 0) {
+                    buffer[bytes_received] = '\0';
+                    int bid = atoi(buffer);
+                    clients[i]->bid_value = bid;
+                    bets_received++;
+                    printf("Received bid of %d$ from client %d (%s)\n", bid, clients[i]->client_id, clients[i]->user_name);
+                }
+            }
         }
     }
-    
-    // Send money capacity message once
-    snprintf(message, BUFFER_SIZE, "You have been given %.2f$ for this sale.\n", sale->money_capacity);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
 
-    // Simulate a 30-second countdown
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+            if (clients[i]->bid_value > highest_bid) {
+                second_highest_bid = highest_bid;
+                highest_bid = clients[i]->bid_value;
+                winning_client_id = i;
+            } else if (clients[i]->bid_value > second_highest_bid) {
+                second_highest_bid = clients[i]->bid_value;
+            }
+        }
+    }
+
+    if (winning_client_id != -1) {
+        snprintf(buffer, BUFFER_SIZE, 
+            "The winner is %.20s with a bid of %d$ for the item: %.20s!\n",
+            clients[winning_client_id]->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
+        
+        send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+        snprintf(buffer, BUFFER_SIZE, 
+            "Congratulations %.20s! You've won the item for %d$. Your remaining money: %.2f$\n",
+            clients[winning_client_id]->user_name, second_highest_bid, clients[winning_client_id]->money);
+
+        sending_data(clients[winning_client_id]->socket, buffer);  // Send personalized message to the winner
+
+        printf("The winner is %s with a bid of %d$ for the item: %s!\n",
+               clients[winning_client_id]->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
+
+        clients[winning_client_id]->money -= second_highest_bid;
+        printf("Client %s's remaining money: %.2f$\n", 
+               clients[winning_client_id]->user_name, clients[winning_client_id]->money);
+    }
+
+    sale->num_of_items--;
+}
+
+void start_sale(Sale *sale) {
+    char buffer[BUFFER_SIZE];
+
+    snprintf(buffer, BUFFER_SIZE, "The sale started!\n");
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    snprintf(buffer, BUFFER_SIZE, "The rule is simple: each one of you has %.2f$. There are %d items in this sale. Each item has a starting price.\nSo think well before making offers!\n\nAh! There’s one more important rule.THE SPICE RULE: The second highest price wins!\n\ngood luck!",
+             sale->items[0].start_price * 10, sale->num_of_items);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    snprintf(buffer, BUFFER_SIZE, "You have been given %.2f$ for this sale.", sale->items[0].start_price * 10);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    pthread_mutex_lock(&client_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+            clients[i]->money = sale->items[0].start_price * 10;
+            clients[i]->bid_value = 0;
+        }
+    }
+    pthread_mutex_unlock(&client_mutex);
+
     sleep(30);
+    clear_client_screens(sale);
 
-    // Clear the terminal screen for all clients in this multicast group
-    snprintf(message, BUFFER_SIZE, "\033[2J\033[H");  // ANSI escape code to clear the screen
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+    while (sale->num_of_items > 0) {
+        handle_bidding(sale);
 
-    // Send the first item to the clients
-    snprintf(message, BUFFER_SIZE, "Item 1: %s (Starting price: $%.2f)", sale->items[0].name, sale->items[0].start_price);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, message);
+        if (sale->num_of_items > 0) {
+            snprintf(buffer, BUFFER_SIZE, "Next item: %s\n", sale->items[sale->num_of_items - 1].name);
+            send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+            sleep(10);
+        }
+    }
+
+    snprintf(buffer, BUFFER_SIZE, "The sale has ended! Congratulations to all winners!\n");
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+}
+
+void clear_client_screens(Sale *sale) {
+    char buffer[BUFFER_SIZE] = "\033[2J\033[H";
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
 }
 
 void *handle_client(void *client_ptr) {
     Client *client = (Client *)client_ptr;
     char buffer[BUFFER_SIZE] = {0};
     ssize_t bytes_received, bytes_received_sale;
-    int flg = 0;  // Flag to track whether we're expecting a password or username
+    int flg = 0;
 
     while (1) {
         printf("Handling client %d\n", client->client_id);
         bytes_received = recv(client->socket, buffer, BUFFER_SIZE, 0);
         if (bytes_received > 0) {
-            buffer[bytes_received] = '\0';  // Null-terminate the received data
-            if (flg == 1) {  // If flag is 1, we are expecting a password
-                printf("Password received from client %d: %s\n", client->client_id, buffer);
-                flg = 0;  // Reset flag
+            buffer[bytes_received] = '\0';
+            if (flg == 1) {
+                printf("Password use the secret password %d: %s\n", client->client_id, buffer);
+                flg = 0;
                 int result = strcmp(secret, buffer);
-                if (result == 0) { // Password is correct
-                    printf("Client %d entered the correct password.\n", client->client_id);
+                if (result == 0) {
+                    printf("username entered the right pass - %s\n", buffer);
                     sending_data(client->socket, "Authentication successful. Please choose a menu number.\n");
                     sleep(2);
-                    while (1) {  // Now we expect the client to choose a sale number
+                    while (1) {
                         sendMenu(client->socket);
                         memset(buffer, 0, BUFFER_SIZE);
                         bytes_received_sale = recv(client->socket, buffer, BUFFER_SIZE, 0);
                         int numb_menu = atoi(buffer);
                         if (numb_menu > num_of_sales || numb_menu <= 0) {
-                            printf("Invalid menu option from client %d: chose %d (only %d options available).\n", client->client_id, numb_menu, num_of_sales);
+                            printf("Problem: menu has only %d options, and user chose number: %d\n", num_of_sales, numb_menu);
                             sending_data(client->socket, "Invalid menu option. Please try again.\n");
                         } else {
-                            printf("Client %d chose menu option %s\n", client->client_id, buffer);
+                            printf("username chose on menu the number - %s\n", buffer);
 
-                            // Track the number of clients in this sale
                             pthread_mutex_lock(&client_mutex);
                             sales[numb_menu - 1].num_of_clients++;
-                            client->selected_sale = numb_menu;  // Track the sale selected by the client
+                            client->selected_sale = numb_menu;
                             pthread_mutex_unlock(&client_mutex);
 
-                            // Send the correct multicast IP to the client
                             char dat[BUFFER_SIZE];
                             snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\nPort: %d\n", sales[client->selected_sale - 1].multicast_ip, sales[client->selected_sale - 1].multicast_port);
                             sending_data(client->socket, dat);
-                            break;  // Exit after sending the multicast IP to the client
+                            break;
                         }
                     }
-                } else { // Password is incorrect
-                    printf("Client %d entered an incorrect password.\n", client->client_id);
+                } else {
                     sending_data(client->socket, "Wrong password. I am calling the police! WEEWOOWEEOO\n");
                     close(client->socket);
-                    
-                    // Clean up client state
-                    pthread_mutex_lock(&client_mutex);
-                    if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
-                        sales[client->selected_sale - 1].num_of_clients--;
-                    }
-                    clients[client->client_id] = NULL;
-                    pthread_mutex_unlock(&client_mutex);
-                    
-                    free(client);  // Free client memory
                     pthread_exit(NULL);
                 }
-            } else if (flg == 0) {  // If flag is 0, we are expecting a username
-                printf("Username received from client %d: %s\n", client->client_id, buffer);
+            } else if (flg == 0) {
+                printf("Received offer to username from client %d: %s\n", client->client_id, buffer);
                 strncpy(client->user_name, buffer, BUFFER_SIZE);
-                flg = 1;  // Set flag to 1 to expect a password next
+                flg = 1;
             }
         } else if (bytes_received == 0) {
-            printf("Client %d disconnected.\n", client->client_id);
-            
-            // Clean up client state
-            pthread_mutex_lock(&client_mutex);
+            printf("Client %d disconnected\n", client->client_id);
+
             if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
+                pthread_mutex_lock(&client_mutex);
                 sales[client->selected_sale - 1].num_of_clients--;
+                pthread_mutex_unlock(&client_mutex);
             }
-            clients[client->client_id] = NULL;
-            pthread_mutex_unlock(&client_mutex);
 
             close(client->socket);
-            free(client);  // Free client memory
             pthread_exit(NULL);
         } else {
-            perror("Receive failed");
-            
-            // Clean up client state
-            pthread_mutex_lock(&client_mutex);
-            if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
-                sales[client->selected_sale - 1].num_of_clients--;
-            }
-            clients[client->client_id] = NULL;
-            pthread_mutex_unlock(&client_mutex);
-
             close(client->socket);
-            free(client);  // Free client memory
+            perror("Receive failed");
+
+            if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
+                pthread_mutex_lock(&client_mutex);
+                sales[client->selected_sale - 1].num_of_clients--;
+                pthread_mutex_unlock(&client_mutex);
+            }
+
             pthread_exit(NULL);
         }
     }
 }
-
 
 void *command_handler(void *arg) {
     char command_buffer[BUFFER_SIZE];
     while (1) {
         printf("Enter command: ");
         if (fgets(command_buffer, BUFFER_SIZE, stdin) != NULL) {
-            command_buffer[strcspn(command_buffer, "\n")] = '\0'; // Remove newline character
+            command_buffer[strcspn(command_buffer, "\n")] = '\0';
 
-            // Check if the command starts with "/"
             if (command_buffer[0] == '/') {
-                // Split the command into parts for easier handling
                 char *command = strtok(command_buffer, " ");
                 char *sub_command = strtok(NULL, " ");
                 char *sale_number_str = strtok(NULL, " ");
                 int sale_number = 0;
 
                 if (sale_number_str) {
-                    sale_number = atoi(sale_number_str);  // Convert sale number from string to integer
+                    sale_number = atoi(sale_number_str);
                 }
 
-                // Switch-case based on the command
-                switch (command[1]) { // Check the first character after '/'
-                    case 's': // Handle /start sale, /resume sale, /secret_command, /show items
+                switch (command[1]) {
+                    case 's':
                         if (strcmp(command, "/start") == 0 && sub_command && strcmp(sub_command, "sale") == 0) {
                             if (sale_number > 0 && sale_number <= num_of_sales) {
                                 pthread_mutex_lock(&client_mutex);
@@ -281,7 +329,7 @@ void *command_handler(void *arg) {
                                 if (num_clients >= 2) {
                                     pthread_mutex_lock(&client_mutex);
                                     if (sales[sale_number - 1].is_started == 0) {
-                                        sales[sale_number - 1].is_started = 1;  // Mark the sale as started
+                                        sales[sale_number - 1].is_started = 1;
                                         pthread_mutex_unlock(&client_mutex);
 
                                         printf("Starting sale %d: %s\n", sale_number, sales[sale_number - 1].title);
@@ -324,7 +372,7 @@ void *command_handler(void *arg) {
                         }
                         break;
 
-                    case 'h': // Handle /help
+                    case 'h':
                         if (strcmp(command, "/help") == 0) {
                             printf("Available commands:\n");
                             printf("/start sale <sale_number> - Start a sale if there are enough clients.\n");
@@ -365,18 +413,18 @@ void send_multicast_message(const char* multicast_ip, int multicast_port, const 
 
     if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
         perror("sendto failed");
+    } else {
+        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
     }
 
     close(sockfd);
 }
 
 int main() {
-    real_time = time(NULL);
     printf("Server is listening on port %d.\n", PORT);
 
     serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
 
-    // Generate items for each sale
     for (int i = 0; i < num_of_sales; i++) {
         generate_items_for_sale(&sales[i]);
     }
@@ -396,8 +444,9 @@ int main() {
             Client *client = (Client *)malloc(sizeof(Client));
             client->socket = new_socket;
             client->address = address;
-            client->selected_sale = -1;  // Initialize with no sale selected
-            client->money = 0.0;  // Initialize money to 0
+            client->selected_sale = -1;
+            client->money = 0.0;
+            client->bid_value = 0;
 
             pthread_mutex_lock(&client_mutex);
             client->client_id = client_count++;
@@ -410,7 +459,7 @@ int main() {
             if (pthread_create(&client_thread, NULL, handle_client, (void *)client) != 0) {
                 perror("Failed to create client thread");
             }
-            pthread_detach(client_thread);  // Automatically reclaim resources when the thread terminates
+            pthread_detach(client_thread);
         } else {
             perror("accept failed");
         }
@@ -427,7 +476,7 @@ void sending_data(int clientSocket, const char *data) {
 }
 
 void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
-    int data_send = recv(clientSocket, data, BUFFER_SIZE, 0); // getting menu
+    int data_send = recv(clientSocket, data, BUFFER_SIZE, 0);
     if (data_send > 0) 
         printf("this data delivered from the server:\n%s", data);
     else
@@ -435,16 +484,14 @@ void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
 }
 
 void sendMenu(int clientSocket) {
-    char Mbuffer[BUFFER_SIZE]; // Buffer to hold serialized menu data
-    memset(Mbuffer, 0, sizeof(Mbuffer)); // Clear buffer
+    char Mbuffer[BUFFER_SIZE];
+    memset(Mbuffer, 0, sizeof(Mbuffer));
 
-    // Serialize menu data into buffer
     int offset = 0;
     for (int i = 0; i < num_of_sales + 1; ++i) {
         offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
     }
 
-    // Send serialized menu to client
     int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
     if (succeed < 0) {
         perror("send failed");
