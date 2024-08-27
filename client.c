@@ -41,8 +41,11 @@ int main() {
 
     // Set address family to IPv4
     serv_addr.sin_family = AF_INET;
+
+    // Set port number and convert to network byte order
     serv_addr.sin_port = htons(PORT);
     
+    // Convert IPv4 and IPv6 addresses from text to binary form
     if (inet_pton(AF_INET, IP, &serv_addr.sin_addr) <= 0) {
         printf("\nInvalid address/ Address not supported\n");
         return -1;
@@ -123,7 +126,7 @@ int main() {
         printf("Multicast IP received from the server: %s\n", buffer);
 
         // Extract multicast IP from the received data
-        sscanf(buffer, "Multicast IP: %49s Port: %d", m_info.multicast_ip, &m_info.multicast_port);
+        sscanf(buffer, "Multicast IP: %49s\nPort: %d\n", m_info.multicast_ip, &m_info.multicast_port);
         m_info.server_sock = sock;
 
         // Create a thread to receive multicast messages
@@ -134,7 +137,7 @@ int main() {
         break;  // Exit after setting up the multicast listener
     }
 
-    // Wait for the sale to start and handle bids
+    // Wait for the sale to start and bid
     while (1) {
         sleep(1);
     }
@@ -218,7 +221,7 @@ void *receive_multicast(void *arg) {
 
         // If the server announces a bid request
         if (strstr(buffer, "Place your bids") != NULL) {
-            handle_bidding(m_info->server_sock);
+            handle_bidding(m_info->server_sock);  // Handle the bidding process
         }
 
         // If the server announces a winner
@@ -232,9 +235,14 @@ void *receive_multicast(void *arg) {
 }
 
 void handle_bidding(int sock) {
-    printf("Enter your bid: ");
     char bid[BUFFER_SIZE];
+
+    printf("Enter your bid: ");
     scanf("%s", bid);
+
+    // Send the bid to the server
     sending_data(sock, bid);
+
+    printf("Bid sent: %s\n", bid);
 }
 
