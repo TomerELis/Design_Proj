@@ -12,26 +12,19 @@
 #define IP "127.0.0.1"
 #define MAX_SALES 10
 
-//======================
-// Function Declarations
-//======================
-void getting_data(int sock, char buffer[BUFFER_SIZE]);
-void sending_data(int sock, const char *buffer);
+// Function Prototypes
+void getting_data(int sock, char buffer4[BUFFER_SIZE]);
+void sending_data(int sock, const char *buffer4);
 void *receive_multicast(void *arg);
 void handle_bidding(int sock);
 
-//======================
-// Struct Definitions
-//======================
 typedef struct {
     char multicast_ip[50];
     int multicast_port;
     int server_sock;
 } multicast_info;
 
-//==================
 // Main Function
-//==================
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
@@ -49,13 +42,16 @@ int main() {
 
     // Set address family to IPv4
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
 
+    // Set port number and convert to network byte order
+    serv_addr.sin_port = htons(PORT);
+    
     // Convert IPv4 and IPv6 addresses from text to binary form
     if (inet_pton(AF_INET, IP, &serv_addr.sin_addr) <= 0) {
         printf("\nInvalid address/ Address not supported\n");
         return -1;
     }
+    
     printf("Address converted successfully.\n");
 
     // Connect to server
@@ -72,18 +68,36 @@ int main() {
     printf("Enter username: ");
     scanf("%49s", user);
 
-    // Clear buffer and send username
+    // Clear buffer to ensure no garbage data is sent
     memset(buffer, 0, BUFFER_SIZE);
-    snprintf(buffer, BUFFER_SIZE, "%s\n", user);
-    sending_data(sock, buffer);
 
-    // Send password
+    // Format data to send to the server
+    snprintf(buffer, BUFFER_SIZE, "%s\n", user);
+
+    // Send data to the server
+    ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
+    if (bytes_sent < 0) {
+        perror("send failed");
+        close(sock);
+        return -1;
+    }
+
     printf("Enter password: ");
     scanf("%49s", pass);
 
+    // Clear buffer to ensure no garbage data is sent
     memset(buffer, 0, BUFFER_SIZE);
+
+    // Format data to send to the server
     snprintf(buffer, BUFFER_SIZE, "%s", pass);
-    sending_data(sock, buffer);
+
+    // Send data to the server
+    ssize_t pass_sent = send(sock, buffer, strlen(buffer), 0);
+    if (pass_sent < 0) {
+        perror("send failed");
+        close(sock);
+        return -1;
+    }
 
     printf("Connecting to the server... Data sent: user %s, pass %s\n", user, pass);
 
@@ -112,7 +126,7 @@ int main() {
         getting_data(sock, buffer);
         printf("Multicast IP received from the server: %s\n", buffer);
 
-        // Extract multicast IP and port from the received data
+        // Extract multicast IP from the received data
         sscanf(buffer, "Multicast IP: %49s\nPort: %d\n", m_info.multicast_ip, &m_info.multicast_port);
         m_info.server_sock = sock;
 
@@ -136,9 +150,8 @@ int main() {
     return 0;
 }
 
-//========================
-// Data Handling Functions
-//========================
+// Function Definitions
+
 void getting_data(int sock, char buffer[BUFFER_SIZE]) {
     int data_received = recv(sock, buffer, BUFFER_SIZE, 0);
     if (data_received > 0) {
@@ -154,9 +167,6 @@ void sending_data(int sock, const char *buffer) {
     }
 }
 
-//===============================
-// Multicast and Bidding Functions
-//===============================
 void *receive_multicast(void *arg) {
     multicast_info *m_info = (multicast_info *)arg;
     int sockfd;
@@ -238,4 +248,3 @@ void handle_bidding(int sock) {
 
     printf("Bid sent: %s\n", bid);
 }
-
