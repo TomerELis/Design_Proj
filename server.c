@@ -7,7 +7,11 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
-#include <errno.h> // Include this header for error handling
+#include <errno.h>
+
+//----------------------------------------
+// Definitions and Structs
+//----------------------------------------
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
@@ -35,7 +39,6 @@ typedef struct {
     int multicast_port;     // Field for dynamic multicast port for each sale
 } Sale;
 
-
 typedef struct {
     int socket;
     struct sockaddr_in address;
@@ -47,7 +50,10 @@ typedef struct {
     int sent_bind; // 1 if the client has sent a bid
 } Client;
 
+//----------------------------------------
 // Function Declarations
+//----------------------------------------
+
 void sendMenu(int clientSocket);
 void sending_data(int clientSocket, const char *data);
 void getting_data(int clientSocket, char data[BUFFER_SIZE]);
@@ -59,11 +65,14 @@ void generate_items_for_sale(Sale *sale);
 void print_items_table(Item *items, int num_items);
 void clear_client_screens(Sale *sale);
 void start_sale(Sale *sale);
-void handle_bidding(Sale *sale); // Make sure this is declared
+void handle_bidding(Sale *sale);
 int compare_clients(const void *a, const void *b);
+void sort_clients_by_bid(Client **client_list, int num_clients);
 
+//----------------------------------------
+// Global Variables
+//----------------------------------------
 
-// Global parameters
 int num_of_sales = 4;
 Client *clients[MAX_CLIENTS];
 int client_count = 0;
@@ -72,14 +81,167 @@ int serverSocket;
 int skip_waiting = 0; // control the waiting period
 
 Sale sales[MAX_SALES] = {
-    {1, "Summer Sale", "224.2.1.1", 0, 0, {{0}}, 0, 150.0, 12345},  // Sale 1 with $150 initial money
-    {2, "Back to School Sale", "224.2.2.1", 0, 0, {{0}}, 0, 200.0, 12346},  // Sale 2 with $200 initial money
-    {3, "Holiday Sale", "224.2.3.1", 0, 0, {{0}}, 0, 300.0, 12347},  // Sale 3 with $300 initial money
-    {4, "End of Year Clearance", "224.2.4.1", 0, 0, {{0}}, 0, 250.0, 12348},  // Sale 4 with $250 initial money
-    {-1, "Exit", "0.0.0.0", 0, 0, {{0}}, 0, 0.0, 0}  // Exit sale, no money associated
+    {1, "Summer Sale", "224.2.1.1", 0, 0, {{0}}, 0, 150.0, 12345},
+    {2, "Back to School Sale", "224.2.2.1", 0, 0, {{0}}, 0, 200.0, 12346},
+    {3, "Holiday Sale", "224.2.3.1", 0, 0, {{0}}, 0, 300.0, 12347},
+    {4, "End of Year Clearance", "224.2.4.1", 0, 0, {{0}}, 0, 250.0, 12348},
+    {-1, "Exit", "0.0.0.0", 0, 0, {{0}}, 0, 0.0, 0}
 };
 
-// Function definitions
+//----------------------------------------
+// Main Function
+//----------------------------------------
+
+int main() {
+    printf("Server is listening on port %d.\n", PORT);
+
+    serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
+
+    for (int i = 0; i < num_of_sales; i++) {
+        generate_items_for_sale(&sales[i]);
+    }
+
+    pthread_t command_thread;
+    if (pthread_create(&command_thread, NULL, command_handler, NULL) != 0) {
+        perror("Failed to create command handler thread");
+        return -1;
+    }
+
+    while (1) {
+        struct sockaddr_in address;
+        int addrlen = sizeof(address);
+        int new_socket = accept(serverSocket, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+
+        if (new_socket >= 0) {
+            Client *client = (Client *)malloc(sizeof(Client));
+            client->socket = new_socket;
+            client->address = address;
+            client->selected_sale = -1;
+            client->money = 0.0;
+            client->bid_value = 0;
+
+            pthread_mutex_lock(&client_mutex);
+            client->client_id = client_count++;
+            clients[client->client_id] = client;
+            pthread_mutex_unlock(&client_mutex);
+
+            printf("Client %d connected.\n", client->client_id);
+
+            pthread_t client_thread;
+            if (pthread_create(&client_thread, NULL, handle_client, (void *)client) != 0) {
+                perror("Failed to create client thread");
+            }
+            pthread_detach(client_thread);
+        } else {
+            perror("accept failed");
+        }
+    }
+
+    close(serverSocket);
+    return 0;
+}
+
+//----------------------------------------
+// Socket and Communication Functions
+//----------------------------------------
+
+int createWelcomeSocket(short port, int maxClient) {
+    int serverSocket, opt = 1;
+    struct sockaddr_in serverAddr;
+    socklen_t server_size;
+
+    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
+    if (serverSocket < 0) {
+        perror("socket failed");
+        return -1;
+    }
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("socket option failed");
+        close(serverSocket);
+        return -1;
+    }
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    server_size = sizeof(serverAddr);
+
+    if ((bind(serverSocket, (struct sockaddr *)&serverAddr, server_size)) < 0) {
+        perror("binding failed");
+        close(serverSocket);
+        return -1;
+    }
+
+    printf("Server is listening to port %d and waiting for new clients...\n", port);
+    if ((listen(serverSocket, maxClient)) < 0) {
+        perror("listen failed");
+        close(serverSocket);
+        return -1;
+    }
+    return serverSocket;
+}
+
+void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
+    int data_send = recv(clientSocket, data, BUFFER_SIZE, 0);
+    if (data_send > 0) 
+        printf("this data delivered from the server:\n%s", data);
+    else
+        printf("Bad getting data\n");
+}
+
+void sending_data(int clientSocket, const char *data) {
+    int send_me = send(clientSocket, data, strlen(data), 0);
+    if (send_me < 0) 
+        perror("send failed");
+}
+
+void sendMenu(int clientSocket) {
+    char Mbuffer[BUFFER_SIZE];
+    memset(Mbuffer, 0, sizeof(Mbuffer));
+
+    int offset = 0;
+    for (int i = 0; i < num_of_sales + 1; ++i) {
+        offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
+    }
+
+    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
+    if (succeed < 0) {
+        perror("send failed");
+    }
+}
+
+void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message) {
+    int sockfd;
+    struct sockaddr_in multicast_addr;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&multicast_addr, 0, sizeof(multicast_addr));
+    multicast_addr.sin_family = AF_INET;
+    multicast_addr.sin_addr.s_addr = inet_addr(multicast_ip);
+    multicast_addr.sin_port = htons(multicast_port);
+
+    if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
+        perror("sendto failed");
+    } else {
+        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
+    }
+
+    close(sockfd);
+}
+
+void clear_client_screens(Sale *sale) {
+    char buffer[BUFFER_SIZE] = "\033[2J\033[H"; // ANSI escape code to clear the screen
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+}
+
+//----------------------------------------
+// Utility and Helper Functions
+//----------------------------------------
+
 void generate_items_for_sale(Sale *sale) {
     if (sale->id == 1) {
         strcpy(sale->items[0].name, "Beach Towel");
@@ -137,132 +299,16 @@ void sort_clients_by_bid(Client **client_list, int num_clients) {
         }
     }
 }
-void start_sale(Sale *sale) {
-    char buffer[BUFFER_SIZE];
 
-    // Inform clients that the sale has started
-    snprintf(buffer, BUFFER_SIZE, "The sale %s has started!\n", sale->title);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
-
-    // Inform clients of the rules and the initial money
-    snprintf(buffer, BUFFER_SIZE, "The rule is simple: each one of you has %.2f$. There are %d items in this sale. Each item has a starting price.\nSo think well before making offers!\n\nAh! There’s one more important rule: THE SPICE RULE: The second highest price wins!\n\ngood luck!", sale->money_capacity, sale->num_of_items);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
-
-    snprintf(buffer, BUFFER_SIZE, "You have been given %.2f$ for this sale.\n", sale->money_capacity);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
-
-    // Set initial money for each client in this sale
-    pthread_mutex_lock(&client_mutex);
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
-            clients[i]->money = sale->money_capacity;
-            clients[i]->sent_bind = 0;  // Reset sent_bind flag
-        }
-    }
-    pthread_mutex_unlock(&client_mutex);
-
-    // Wait for 20 seconds or until /skip command is issued
-    int wait_time = 20;
-    while (wait_time > 0 && !skip_waiting) {
-        sleep(1);
-        wait_time--;
-    }
-
-    // Reset the skip_waiting flag
-    skip_waiting = 0;
-
-    // Clear client screens and start the bidding process
-    clear_client_screens(sale);
-
-    // Handle the bidding process
-    handle_bidding(sale);
-}
-
-// Function to clear client screens
-void clear_client_screens(Sale *sale) {
-    char buffer[BUFFER_SIZE] = "\033[2J\033[H"; // ANSI escape code to clear the screen
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
-}
-// Comparison function for qsort to sort clients by bid_value in descending order
 int compare_clients(const void *a, const void *b) {
     Client *client_a = *(Client **)a;
     Client *client_b = *(Client **)b;
     return client_b->bid_value - client_a->bid_value;  // Sort in descending order
 }
 
-void handle_bidding(Sale *sale) {
-    int num_clients = sale->num_of_clients;
-    Client **bidding_clients = malloc(sizeof(Client *) * num_clients);
-    int client_count = 0;
-    
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
-            bidding_clients[client_count++] = clients[i];
-        }
-    }
-
-    time_t start_time = time(NULL);
-    while (time(NULL) - start_time < 20) {
-        int all_bids_received = 1;
-        for (int i = 0; i < client_count; i++) {
-            if (bidding_clients[i]->sent_bind == 0) {
-                all_bids_received = 0;
-                break;
-            }
-        }
-        if (all_bids_received) break;
-        usleep(100000); // Sleep for 100 ms to avoid busy-waiting
-    }
-
-    // Sort the clients based on their bid value in descending order
-    qsort(bidding_clients, client_count, sizeof(Client *), compare_clients);
-
-    // Determine the highest and second highest bids
-    int highest_bid = (client_count > 0) ? bidding_clients[0]->bid_value : 0;
-    int second_highest_bid = (client_count > 1) ? bidding_clients[1]->bid_value : 0;
-
-    // Find the winning client
-    Client *winning_client = (client_count > 0) ? bidding_clients[0] : NULL;
-
-    if (winning_client != NULL) {
-        // Calculate the required size for the formatted string
-        int size = snprintf(NULL, 0, "The winner is %s with a bid of %d$ for the item: %s!\n",
-                            winning_client->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
-        size += 1; // For the null terminator
-
-        // Dynamically allocate memory for the buffer
-        char *buffer = malloc(size);
-
-        // Use snprintf to format the string into the dynamically allocated buffer
-        snprintf(buffer, size, "The winner is %s with a bid of %d$ for the item: %s!\n",
-                 winning_client->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
-
-        send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
-        
-        // Update winning client's money
-        winning_client->money -= second_highest_bid;
-
-        // Send the results to the winning client
-        size = snprintf(NULL, 0, "Congratulations %s! You've won the item for %d$. Your remaining money: %.2f$\n",
-                        winning_client->user_name, second_highest_bid, winning_client->money);
-        size += 1;
-
-        char *result_message = malloc(size);
-        snprintf(result_message, size, "Congratulations %s! You've won the item for %d$. Your remaining money: %.2f$\n",
-                 winning_client->user_name, second_highest_bid, winning_client->money);
-
-        sending_data(winning_client->socket, result_message);
-
-        // Free the dynamically allocated memory
-        free(buffer);
-        free(result_message);
-    }
-
-    free(bidding_clients);
-
-    sale->num_of_items--;
-}
-
+//----------------------------------------
+// Client Handling Functions
+//----------------------------------------
 
 void *handle_client(void *client_ptr) {
     Client *client = (Client *)client_ptr;
@@ -360,7 +406,127 @@ void *handle_client(void *client_ptr) {
     }
 }
 
+//----------------------------------------
+// Sale Handling Functions
+//----------------------------------------
 
+void start_sale(Sale *sale) {
+    char buffer[BUFFER_SIZE];
+
+    // Inform clients that the sale has started
+    snprintf(buffer, BUFFER_SIZE, "The sale %s has started!\n", sale->title);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    // Inform clients of the rules and the initial money
+    snprintf(buffer, BUFFER_SIZE, "The rule is simple: each one of you has %.2f$. There are %d items in this sale. Each item has a starting price.\nSo think well before making offers!\n\nAh! There’s one more important rule: THE SPICE RULE: The second highest price wins!\n\ngood luck!", sale->money_capacity, sale->num_of_items);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    snprintf(buffer, BUFFER_SIZE, "You have been given %.2f$ for this sale.\n", sale->money_capacity);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+
+    // Set initial money for each client in this sale
+    pthread_mutex_lock(&client_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+            clients[i]->money = sale->money_capacity;
+            clients[i]->sent_bind = 0;  // Reset sent_bind flag
+        }
+    }
+    pthread_mutex_unlock(&client_mutex);
+
+    // Wait for 20 seconds or until /skip command is issued
+    int wait_time = 20;
+    while (wait_time > 0 && !skip_waiting) {
+        sleep(1);
+        wait_time--;
+    }
+
+    // Reset the skip_waiting flag
+    skip_waiting = 0;
+
+    // Clear client screens and start the bidding process
+    clear_client_screens(sale);
+
+    // Handle the bidding process
+    handle_bidding(sale);
+}
+
+void handle_bidding(Sale *sale) {
+    int num_clients = sale->num_of_clients;
+    Client **bidding_clients = malloc(sizeof(Client *) * num_clients);
+    int client_count = 0;
+    
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+            bidding_clients[client_count++] = clients[i];
+        }
+    }
+
+    time_t start_time = time(NULL);
+    while (time(NULL) - start_time < 20) {
+        int all_bids_received = 1;
+        for (int i = 0; i < client_count; i++) {
+            if (bidding_clients[i]->sent_bind == 0) {
+                all_bids_received = 0;
+                break;
+            }
+        }
+        if (all_bids_received) break;
+        usleep(100000); // Sleep for 100 ms to avoid busy-waiting
+    }
+
+    // Sort the clients based on their bid value in descending order
+    qsort(bidding_clients, client_count, sizeof(Client *), compare_clients);
+
+    // Determine the highest and second highest bids
+    int highest_bid = (client_count > 0) ? bidding_clients[0]->bid_value : 0;
+    int second_highest_bid = (client_count > 1) ? bidding_clients[1]->bid_value : 0;
+
+    // Find the winning client
+    Client *winning_client = (client_count > 0) ? bidding_clients[0] : NULL;
+
+    if (winning_client != NULL) {
+        // Calculate the required size for the formatted string
+        int size = snprintf(NULL, 0, "The winner is %s with a bid of %d$ for the item: %s!\n",
+                            winning_client->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
+        size += 1; // For the null terminator
+
+        // Dynamically allocate memory for the buffer
+        char *buffer = malloc(size);
+
+        // Use snprintf to format the string into the dynamically allocated buffer
+        snprintf(buffer, size, "The winner is %s with a bid of %d$ for the item: %s!\n",
+                 winning_client->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
+
+        send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+        
+        // Update winning client's money
+        winning_client->money -= second_highest_bid;
+
+        // Send the results to the winning client
+        size = snprintf(NULL, 0, "Congratulations %s! You've won the item for %d$. Your remaining money: %.2f$\n",
+                        winning_client->user_name, second_highest_bid, winning_client->money);
+        size += 1;
+
+        char *result_message = malloc(size);
+        snprintf(result_message, size, "Congratulations %s! You've won the item for %d$. Your remaining money: %.2f$\n",
+                 winning_client->user_name, second_highest_bid, winning_client->money);
+
+        sending_data(winning_client->socket, result_message);
+
+        // Free the dynamically allocated memory
+        free(buffer);
+        free(result_message);
+    }
+
+    free(bidding_clients);
+
+    sale->num_of_items--;
+}
+
+//----------------------------------------
+// Command Handler Function
+//----------------------------------------
 
 void *command_handler(void *arg) {
     char command_buffer[BUFFER_SIZE];
@@ -460,142 +626,5 @@ void *command_handler(void *arg) {
             }
         }
     }
-}
-
-void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message) {
-    int sockfd;
-    struct sockaddr_in multicast_addr;
-
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        perror("socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    memset(&multicast_addr, 0, sizeof(multicast_addr));
-    multicast_addr.sin_family = AF_INET;
-    multicast_addr.sin_addr.s_addr = inet_addr(multicast_ip);
-    multicast_addr.sin_port = htons(multicast_port);
-
-    if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
-        perror("sendto failed");
-    } else {
-        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
-    }
-
-    close(sockfd);
-}
-
-int main() {
-    printf("Server is listening on port %d.\n", PORT);
-
-    serverSocket = createWelcomeSocket(PORT, MAX_CLIENTS);
-
-    for (int i = 0; i < num_of_sales; i++) {
-        generate_items_for_sale(&sales[i]);
-    }
-
-    pthread_t command_thread;
-    if (pthread_create(&command_thread, NULL, command_handler, NULL) != 0) {
-        perror("Failed to create command handler thread");
-        return -1;
-    }
-
-    while (1) {
-        struct sockaddr_in address;
-        int addrlen = sizeof(address);
-        int new_socket = accept(serverSocket, (struct sockaddr *)&address, (socklen_t*)&addrlen);
-
-        if (new_socket >= 0) {
-            Client *client = (Client *)malloc(sizeof(Client));
-            client->socket = new_socket;
-            client->address = address;
-            client->selected_sale = -1;
-            client->money = 0.0;
-            client->bid_value = 0;
-
-            pthread_mutex_lock(&client_mutex);
-            client->client_id = client_count++;
-            clients[client->client_id] = client;
-            pthread_mutex_unlock(&client_mutex);
-
-            printf("Client %d connected.\n", client->client_id);
-
-            pthread_t client_thread;
-            if (pthread_create(&client_thread, NULL, handle_client, (void *)client) != 0) {
-                perror("Failed to create client thread");
-            }
-            pthread_detach(client_thread);
-        } else {
-            perror("accept failed");
-        }
-    }
-
-    close(serverSocket);
-    return 0;
-}
-
-void sending_data(int clientSocket, const char *data) {
-    int send_me = send(clientSocket, data, strlen(data), 0);
-    if (send_me < 0) 
-        perror("send failed");
-}
-
-void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
-    int data_send = recv(clientSocket, data, BUFFER_SIZE, 0);
-    if (data_send > 0) 
-        printf("this data delivered from the server:\n%s", data);
-    else
-        printf("Bad getting data\n");
-}
-
-void sendMenu(int clientSocket) {
-    char Mbuffer[BUFFER_SIZE];
-    memset(Mbuffer, 0, sizeof(Mbuffer));
-
-    int offset = 0;
-    for (int i = 0; i < num_of_sales + 1; ++i) {
-        offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
-    }
-
-    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
-    if (succeed < 0) {
-        perror("send failed");
-    }
-}
-
-int createWelcomeSocket(short port, int maxClient) {
-    int serverSocket, opt = 1;
-    struct sockaddr_in serverAddr;
-    socklen_t server_size;
-
-    serverSocket = socket(PF_INET, SOCK_STREAM, 0);
-    if (serverSocket < 0) {
-        perror("socket failed");
-        return -1;
-    }
-    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("socket option failed");
-        close(serverSocket);
-        return -1;
-    }
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    server_size = sizeof(serverAddr);
-
-    if ((bind(serverSocket, (struct sockaddr *)&serverAddr, server_size)) < 0) {
-        perror("binding failed");
-        close(serverSocket);
-        return -1;
-    }
-
-    printf("Server is listening to port %d and waiting for new clients...\n", port);
-    if ((listen(serverSocket, maxClient)) < 0) {
-        perror("listen failed");
-        close(serverSocket);
-        return -1;
-    }
-    return serverSocket;
 }
 
