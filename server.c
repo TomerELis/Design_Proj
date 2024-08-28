@@ -16,6 +16,8 @@
 #define MAX_SALES 10
 #define MAX_ITEMS 5  // Maximum number of items per sale
 
+#define header_size 72
+
 typedef struct {
     char name[50];
     int id;
@@ -51,7 +53,7 @@ typedef struct {
 //========================
 void sendMenu(int clientSocket);
 void sending_data(int clientSocket, const char *data, int type, int client_id, int sale_id, int item_id);
-void getting_data(int clientSocket, char data[BUFFER_SIZE]);
+void getting_data(int sock, char *data, int *type, int *length, int *client_id, int *sale_id, int *item_id);
 int createWelcomeSocket(short port, int maxClient);
 void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message, int type, int client_id, int sale_id, int item_id);
 void *handle_client(void *client_ptr);
@@ -176,22 +178,51 @@ int createWelcomeSocket(short port, int maxClient) {
 //========================
 // Data Handling Functions
 //========================
-void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
-    int data_received = recv(clientSocket, data, BUFFER_SIZE, 0);
+
+void getting_data(int sock, char *data, int *type, int *length, int *client_id, int *sale_id, int *item_id) {
+    char buffer[BUFFER_SIZE];
+    int data_received = recv(sock, buffer, BUFFER_SIZE, 0);
     if (data_received > 0) {
-        data[data_received] = '\0';  // Null-terminate the received data
-        printf("Data received from client %d: %s\n", clientSocket, data);
+        buffer[data_received] = '\0';
+
+        // Parse SBP Header with the correct format for each field
+        sscanf(buffer, "%4d%16d%16d%8d%16d", type, length, client_id, sale_id, item_id);
+
+
+        // Extract data without header
+        strcpy(data, buffer + header_size);  // Extract the actual data part after the header
+        printf("%s",data);
+
     } else {
-        printf("Failed to receive data from client %d.\n", clientSocket);
+        printf("Failed to receive data.\n");
     }
 }
 
+
 void sending_data(int clientSocket, const char *data, int type, int client_id, int sale_id, int item_id) {
-    char buffer[BUFFER_SIZE];
-    snprintf(buffer, BUFFER_SIZE, "SBP;%d;%d;%d;%d;%d;%s", 1, type, client_id, sale_id, item_id, data);
-    if (send(clientSocket, buffer, strlen(buffer), 0) < 0) {
+    char header[header_size];
+
+    // Calculate the length of the data
+    int length = strlen(data);
+
+    // Construct the SBP header with the specified bit lengths
+    snprintf(header, BUFFER_SIZE, "%04d%016d%016d%08d%016d",type,length,client_id,sale_id,   item_id);
+
+    printf("SBP Header: %s\n", header);  // Debugging: Print the SBP header
+
+    // Combine header and data into a single message
+    char *sbp_message = malloc(strlen(header) + strlen(data) + 1);
+    strcpy(sbp_message, header);   // Copy header to the message
+    strcat(sbp_message, data);     // Append data to the message
+
+	printf("header:%s , data:%s",header,data);
+    // Send the SBP message to the client
+    if (send(clientSocket, sbp_message, strlen(sbp_message), 0) < 0) {
         perror("Failed to send data");
     }
+
+    // Free the allocated memory
+    free(sbp_message);
 }
 
 void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message, int type, int client_id, int sale_id, int item_id) {
@@ -310,52 +341,67 @@ int compare_clients(const void *a, const void *b) {
 //========================
 void *handle_client(void *client_ptr) {
     Client *client = (Client *)client_ptr;
-    char buffer[BUFFER_SIZE] = {0};
-    ssize_t bytes_received, bytes_received_sale;
-    int flg = 0;  // Flag to track whether we're expecting a password or username
+    char *data = NULL;  // Dynamic buffer for data
+    ssize_t bytes_received;
+    int version, type, length, reserved, client_id, sale_id, item_id;
 
     while (1) {
         printf("Handling client %d\n", client->client_id);
-        bytes_received = recv(client->socket, buffer, BUFFER_SIZE, 0);
-        if (bytes_received > 0) {
-            buffer[bytes_received] = '\0';  // Null-terminate the received data
+
+        // Use the getting_data function to receive and parse the data
+        getting_data(client->socket, &data, &type, &length, &client_id, &sale_id, &item_id);
+
+        if (data != NULL) {
             if (flg == 1) {  // If flag is 1, we are expecting a password
-                printf("Password received from client %d: %s\n", client->client_id, buffer);
+                printf("Password received from client %d: %s\n", client->client_id, data);
                 flg = 0;  // Reset flag
-                int result = strcmp(secret, buffer);
+
+                // Check if the password matches the expected value
+                int result = strcmp(secret, data);
                 if (result == 0) { // Password is correct
                     printf("Client %d entered the correct password.\n", client->client_id);
                     sending_data(client->socket, "Authentication successful. Please choose a menu number.\n", 2, client->client_id, 0, 0);
                     sleep(2);
+
                     while (1) {  // Now we expect the client to choose a sale number
                         sendMenu(client->socket);
-                        memset(buffer, 0, BUFFER_SIZE);
-                        bytes_received_sale = recv(client->socket, buffer, BUFFER_SIZE, 0);
-                        int numb_menu = atoi(buffer);
-                        if (numb_menu > num_of_sales || numb_menu <= 0) {
-                            printf("Invalid menu option from client %d: chose %d (only %d options available).\n", client->client_id, numb_menu, num_of_sales);
-                            sending_data(client->socket, "Invalid menu option. Please try again.\n", 2, client->client_id, 0, 0);
+                        free(data);  // Free previous data before receiving new data
+                        data = NULL;
+
+                        // Receive the sale number selection from the client
+                        getting_data(client->socket, &data, &type, &length, &client_id, &sale_id, &item_id);
+
+                        if (data != NULL) {
+                            int numb_menu = atoi(data);  // Convert the actual data to an integer (menu number)
+
+                            if (numb_menu > num_of_sales || numb_menu <= 0) {
+                                printf("Invalid menu option from client %d: chose %d (only %d options available).\n", client->client_id, numb_menu, num_of_sales);
+                                sending_data(client->socket, "Invalid menu option. Please try again.\n", 2, client->client_id, 0, 0);
+                            } else {
+                                printf("Client %d chose menu option %d\n", client->client_id, numb_menu);
+
+                                // Track the number of clients in this sale
+                                pthread_mutex_lock(&client_mutex);
+                                sales[numb_menu - 1].num_of_clients++;
+                                client->selected_sale = numb_menu;  // Track the sale selected by the client
+                                pthread_mutex_unlock(&client_mutex);
+
+                                // Send the correct multicast IP to the client
+                                char dat[BUFFER_SIZE];
+                                snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\nPort: %d\n", sales[client->selected_sale - 1].multicast_ip, sales[client->selected_sale - 1].multicast_port);
+                                sending_data(client->socket, dat, 2, client->client_id, 0, 0);
+                                break;  // Exit after sending the multicast IP to the client
+                            }
                         } else {
-                            printf("Client %d chose menu option %s\n", client->client_id, buffer);
-
-                            // Track the number of clients in this sale
-                            pthread_mutex_lock(&client_mutex);
-                            sales[numb_menu - 1].num_of_clients++;
-                            client->selected_sale = numb_menu;  // Track the sale selected by the client
-                            pthread_mutex_unlock(&client_mutex);
-
-                            // Send the correct multicast IP to the client
-                            char dat[BUFFER_SIZE];
-                            snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\nPort: %d\n", sales[client->selected_sale - 1].multicast_ip, sales[client->selected_sale - 1].multicast_port);
-                            sending_data(client->socket, dat, 2, client->client_id, 0, 0);
-                            break;  // Exit after sending the multicast IP to the client
+                            printf("Failed to receive sale number from client %d.\n", client->client_id);
+                            break;
                         }
                     }
                 } else { // Password is incorrect
                     printf("Client %d entered an incorrect password.\n", client->client_id);
                     sending_data(client->socket, "Wrong password. I am calling the police! WEEWOOWEEOO\n", 2, client->client_id, 0, 0);
                     close(client->socket);
-                    
+
                     // Clean up client state
                     pthread_mutex_lock(&client_mutex);
                     if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
@@ -363,18 +409,22 @@ void *handle_client(void *client_ptr) {
                     }
                     clients[client->client_id] = NULL;
                     pthread_mutex_unlock(&client_mutex);
-                    
+
                     free(client);  // Free client memory
                     pthread_exit(NULL);
                 }
             } else if (flg == 0) {  // If flag is 0, we are expecting a username
-                printf("Username received from client %d: %s\n", client->client_id, buffer);
-                strncpy(client->user_name, buffer, BUFFER_SIZE);
+                printf("Username received from client %d: %s\n", client->client_id, data);
+                strncpy(client->user_name, data, BUFFER_SIZE);
                 flg = 1;  // Set flag to 1 to expect a password next
             }
+
+            free(data);  // Free the dynamically allocated data buffer
+            data = NULL; // Reset the data pointer for the next loop iteration
+
         } else if (bytes_received == 0) {
             printf("Client %d disconnected.\n", client->client_id);
-            
+
             // Clean up client state
             pthread_mutex_lock(&client_mutex);
             if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
@@ -388,7 +438,7 @@ void *handle_client(void *client_ptr) {
             pthread_exit(NULL);
         } else {
             perror("Receive failed");
-            
+
             // Clean up client state
             pthread_mutex_lock(&client_mutex);
             if (client->selected_sale > 0 && client->selected_sale <= num_of_sales) {
@@ -403,6 +453,8 @@ void *handle_client(void *client_ptr) {
         }
     }
 }
+
+
 
 //========================
 // Command Handling Function
@@ -494,12 +546,43 @@ void *command_handler(void *arg) {
                         }
                         break;
 
+                    case 'c':
+                        if (strcmp(command, "/client") == 0 && sub_command) {
+                            char *client_name = sub_command;
+
+                            pthread_mutex_lock(&client_mutex);
+                            int found = 0;
+                            for (int i = 0; i < MAX_CLIENTS; i++) {
+                                if (clients[i] != NULL && strcmp(clients[i]->user_name, client_name) == 0) {
+                                    found = 1;
+                                    printf("Client ID: %d\n", clients[i]->client_id);
+                                    printf("Username: %s\n", clients[i]->user_name);
+                                    printf("Selected Sale: %d\n", clients[i]->selected_sale);
+                                    printf("Money: %.2f\n", clients[i]->money);
+                                    printf("Bid Value: %d\n", clients[i]->bid_value);
+                                    printf("Sent Bind: %d\n", clients[i]->sent_bind);
+                                    printf("Socket: %d\n", clients[i]->socket);
+                                    printf("Address: %s\n", inet_ntoa(clients[i]->address.sin_addr));
+                                    break;
+                                }
+                            }
+                            pthread_mutex_unlock(&client_mutex);
+
+                            if (!found) {
+                                printf("Client with name '%s' not found.\n", client_name);
+                            }
+                        } else {
+                            printf("Invalid command or missing client name.\n");
+                        }
+                        break;
+
                     case 'h':
                         if (strcmp(command, "/help") == 0) {
                             printf("Available commands:\n");
                             printf("/start sale <sale_number> - Start a sale if there are enough clients.\n");
                             printf("/resume sale <sale_number> - Resume a previously started sale.\n");
                             printf("/show items <sale_number> - Show all items in a specific sale.\n");
+                            printf("/client <name> - Show all information about a specific client by name.\n");
                             printf("/secret_command - Execute a secret command.\n");
                             printf("/skip - Skip the current waiting period.\n");
                             printf("/help - List all available commands.\n");
@@ -518,6 +601,7 @@ void *command_handler(void *arg) {
         }
     }
 }
+
 
 //========================
 // Sale Management Functions
