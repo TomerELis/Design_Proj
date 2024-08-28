@@ -12,26 +12,36 @@
 #define IP "127.0.0.1"
 #define MAX_SALES 10
 
-// Function Prototypes
-void getting_data(int sock, char buffer4[BUFFER_SIZE]);
-void sending_data(int sock, const char *buffer4);
-void *receive_multicast(void *arg);
-void handle_bidding(int sock);
-
+//========================
+// Data Structures
+//========================
 typedef struct {
     char multicast_ip[50];
     int multicast_port;
     int server_sock;
+    int client_id;  // New field to store client ID
 } multicast_info;
 
+//========================
+// Function Declarations
+//========================
+void getting_data(int sock, char buffer[BUFFER_SIZE]);
+void sending_data(int sock, const char *buffer);
+void *receive_multicast(void *arg);
+void handle_bidding(int sock, int client_id);
+
+//========================
 // Main Function
+//========================
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char buffer[BUFFER_SIZE] = {0};
-    char num_menu[BUFFER_SIZE];
+    char *buffer = malloc(BUFFER_SIZE);
+    char *num_menu = malloc(BUFFER_SIZE);
     multicast_info m_info;
     pthread_t multicast_thread;
+
+    int version, type, length, reserved, client_id, sale_id, item_id;
 
     // Create socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -62,8 +72,8 @@ int main() {
     printf("Connected to server successfully.\n");
 
     // Send username
-    char user[50];
-    char pass[50];
+    char *user = malloc(50);
+    char *pass = malloc(50);
 
     printf("Enter username: ");
     scanf("%49s", user);
@@ -75,12 +85,7 @@ int main() {
     snprintf(buffer, BUFFER_SIZE, "%s\n", user);
 
     // Send data to the server
-    ssize_t bytes_sent = send(sock, buffer, strlen(buffer), 0);
-    if (bytes_sent < 0) {
-        perror("send failed");
-        close(sock);
-        return -1;
-    }
+    sending_data(sock, buffer, 1, 1, strlen(buffer), 0, 0, 0, 0);
 
     printf("Enter password: ");
     scanf("%49s", pass);
@@ -92,17 +97,12 @@ int main() {
     snprintf(buffer, BUFFER_SIZE, "%s", pass);
 
     // Send data to the server
-    ssize_t pass_sent = send(sock, buffer, strlen(buffer), 0);
-    if (pass_sent < 0) {
-        perror("send failed");
-        close(sock);
-        return -1;
-    }
+    sending_data(sock, buffer, 1, 1, strlen(buffer), 0, 0, 0, 0);
 
     printf("Connecting to the server... Data sent: user %s, pass %s\n", user, pass);
 
     // Wait for server's authentication response
-    getting_data(sock, buffer);
+    getting_data(sock, buffer, &version, &type, &length, &reserved, &client_id, &sale_id, &item_id);
     printf("Server response: %s\n", buffer);
 
     if (strstr(buffer, "Wrong password") != NULL) {
@@ -113,17 +113,17 @@ int main() {
 
     // Main loop to handle menu selection
     while (1) {
-        getting_data(sock, buffer);
+        getting_data(sock, buffer, &version, &type, &length, &reserved, &client_id, &sale_id, &item_id);
         printf("%s", buffer);
 
         printf("Choose a sale number: ");
         scanf("%49s", num_menu);
 
         // Send the chosen menu number to the server
-        sending_data(sock, num_menu);
+        sending_data(sock, num_menu, 1, 3, strlen(num_menu), 0, client_id, sale_id, 0);
 
         // Receive multicast IP from the server
-        getting_data(sock, buffer);
+        getting_data(sock, buffer, &version, &type, &length, &reserved, &client_id, &sale_id, &item_id);
         printf("Multicast IP received from the server: %s\n", buffer);
 
         // Extract multicast IP from the received data
@@ -147,26 +147,53 @@ int main() {
     close(sock);
     printf("Connection closed.\n");
 
+    free(buffer);
+    free(num_menu);
+    free(user);
+    free(pass);
+
     return 0;
 }
 
-// Function Definitions
-
-void getting_data(int sock, char buffer[BUFFER_SIZE]) {
+//========================
+// Data Handling Functions
+void getting_data(int sock, char *data, int *version, int *type, int *length, int *reserved, int *client_id, int *sale_id, int *item_id) {
+    char buffer[BUFFER_SIZE];
     int data_received = recv(sock, buffer, BUFFER_SIZE, 0);
     if (data_received > 0) {
         buffer[data_received] = '\0';
+
+        // Parse SBP Header
+        sscanf(buffer, "%1d%1d%2d%1d%2d%1d%2d", version, type, length, reserved, client_id, sale_id, item_id);
+
+        // Extract data without header
+        strcpy(data, buffer + 8);  // Adjust this if the header size changes
     } else {
         printf("Failed to receive data.\n");
     }
 }
 
-void sending_data(int sock, const char *buffer) {
-    if (send(sock, buffer, strlen(buffer), 0) < 0) {
+
+
+void sending_data(int sock, const char *data, int version, int type, int length, int reserved, int client_id, int sale_id, int item_id) {
+    char header[BUFFER_SIZE];
+    snprintf(header, BUFFER_SIZE, "%d%d%d%d%d%d%d", version, type, length, reserved, client_id, sale_id, item_id);
+
+    // Combine header and data
+    char *sbp_message = malloc(strlen(header) + strlen(data) + 1);
+    strcpy(sbp_message, header);
+    strcat(sbp_message, data);
+
+    if (send(sock, sbp_message, strlen(sbp_message), 0) < 0) {
         perror("Failed to send data");
     }
+
+    free(sbp_message);
 }
 
+//========================
+// Multicast Handling Functions
+//========================
 void *receive_multicast(void *arg) {
     multicast_info *m_info = (multicast_info *)arg;
     int sockfd;
@@ -223,12 +250,12 @@ void *receive_multicast(void *arg) {
         printf("%s\n", buffer);
 
         // If the server announces a bid request
-        if (strstr(buffer, "Place your bids") != NULL) {
-            handle_bidding(m_info->server_sock);  // Handle the bidding process
+        if (strstr(buffer, "BID_REQUEST") != NULL) {
+            handle_bidding(m_info->server_sock, m_info->client_id);  // Handle the bidding process
         }
 
         // If the server announces a winner
-        if (strstr(buffer, "The winner is") != NULL) {
+        if (strstr(buffer, "WINNER") != NULL) {
             printf("%s\n", buffer);
         }
     }
@@ -237,14 +264,25 @@ void *receive_multicast(void *arg) {
     pthread_exit(NULL);
 }
 
-void handle_bidding(int sock) {
-    char bid[BUFFER_SIZE];
+//========================
+// Bidding Function
+//========================
+void handle_bidding(int sock, int client_id) {
+    char *buffer = malloc(BUFFER_SIZE);
+    char *bid = malloc(BUFFER_SIZE);
 
     printf("Enter your bid: ");
     scanf("%s", bid);
 
-    // Send the bid to the server
-    sending_data(sock, bid);
+    // Format bid according to SBP
+    snprintf(buffer, BUFFER_SIZE, "BID;CLIENT_ID:%d;ITEM_ID:%d;BID_PRICE:%s;", client_id, 1, bid);  // Assuming item ID is 1 for simplicity
 
-    printf("Bid sent: %s\n", bid);
+    sending_data(sock, buffer, 1, 2, strlen(buffer), 0, client_id, 1, 1);
+
+    printf("Bid sent: %s\n", buffer);
+
+    free(buffer);
+    free(bid);
 }
+
+

@@ -50,19 +50,20 @@ typedef struct {
 // Function Declarations
 //========================
 void sendMenu(int clientSocket);
-void sending_data(int clientSocket, const char *data);
+void sending_data(int clientSocket, const char *data, int type, int client_id, int sale_id, int item_id);
 void getting_data(int clientSocket, char data[BUFFER_SIZE]);
 int createWelcomeSocket(short port, int maxClient);
-void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message);
+void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message, int type, int client_id, int sale_id, int item_id);
 void *handle_client(void *client_ptr);
 void *command_handler(void *arg);
 void generate_items_for_sale(Sale *sale);
 void print_items_table(Item *items, int num_items);
 void clear_client_screens(Sale *sale);
 void start_sale(Sale *sale);
-void handle_bidding(Sale *sale); // Make sure this is declared
+void *handle_bidding(void *arg);
 int compare_clients(const void *a, const void *b);
 void sort_clients_by_bid(Client **client_list, int num_clients);
+void *sale_handler(void *arg);
 
 //========================
 // Global Parameters
@@ -176,17 +177,48 @@ int createWelcomeSocket(short port, int maxClient) {
 // Data Handling Functions
 //========================
 void getting_data(int clientSocket, char data[BUFFER_SIZE]) {
-    int data_send = recv(clientSocket, data, BUFFER_SIZE, 0);
-    if (data_send > 0) 
-        printf("this data delivered from the server:\n%s", data);
-    else
-        printf("Bad getting data\n");
+    int data_received = recv(clientSocket, data, BUFFER_SIZE, 0);
+    if (data_received > 0) {
+        data[data_received] = '\0';  // Null-terminate the received data
+        printf("Data received from client %d: %s\n", clientSocket, data);
+    } else {
+        printf("Failed to receive data from client %d.\n", clientSocket);
+    }
 }
 
-void sending_data(int clientSocket, const char *data) {
-    int send_me = send(clientSocket, data, strlen(data), 0);
-    if (send_me < 0) 
-        perror("send failed");
+void sending_data(int clientSocket, const char *data, int type, int client_id, int sale_id, int item_id) {
+    char buffer[BUFFER_SIZE];
+    snprintf(buffer, BUFFER_SIZE, "SBP;%d;%d;%d;%d;%d;%s", 1, type, client_id, sale_id, item_id, data);
+    if (send(clientSocket, buffer, strlen(buffer), 0) < 0) {
+        perror("Failed to send data");
+    }
+}
+
+void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message, int type, int client_id, int sale_id, int item_id) {
+    int sockfd;
+    struct sockaddr_in multicast_addr;
+    char buffer[BUFFER_SIZE];
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    snprintf(buffer, BUFFER_SIZE, "SBP;%d;%d;%d;%d;%d;%s", 1, type, client_id, sale_id, item_id, message);
+
+    memset(&multicast_addr, 0, sizeof(multicast_addr));
+    multicast_addr.sin_family = AF_INET;
+    multicast_addr.sin_addr.s_addr = inet_addr(multicast_ip);
+    multicast_addr.sin_port = htons(multicast_port);
+
+    if (sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
+        perror("sendto failed");
+    } else {
+        printf("Multicast message sent to %s: %s\n", multicast_ip, buffer);
+    }
+
+    close(sockfd);
 }
 
 void sendMenu(int clientSocket) {
@@ -198,39 +230,12 @@ void sendMenu(int clientSocket) {
         offset += sprintf(Mbuffer + offset, "%d. %s\n", sales[i].id, sales[i].title);
     }
 
-    int succeed = send(clientSocket, Mbuffer, strlen(Mbuffer), 0);
-    if (succeed < 0) {
-        perror("send failed");
-    }
-}
-
-void send_multicast_message(const char* multicast_ip, int multicast_port, const char* message) {
-    int sockfd;
-    struct sockaddr_in multicast_addr;
-
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0) {
-        perror("socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    memset(&multicast_addr, 0, sizeof(multicast_addr));
-    multicast_addr.sin_family = AF_INET;
-    multicast_addr.sin_addr.s_addr = inet_addr(multicast_ip);
-    multicast_addr.sin_port = htons(multicast_port);
-
-    if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
-        perror("sendto failed");
-    } else {
-        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
-    }
-
-    close(sockfd);
+    sending_data(clientSocket, Mbuffer, 3, 0, 0, 0); // Use SBP with type 3
 }
 
 void clear_client_screens(Sale *sale) {
     char buffer[BUFFER_SIZE] = "\033[2J\033[H"; // ANSI escape code to clear the screen
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer, 4, 0, sale->id, 0);
 }
 
 //========================
@@ -320,7 +325,7 @@ void *handle_client(void *client_ptr) {
                 int result = strcmp(secret, buffer);
                 if (result == 0) { // Password is correct
                     printf("Client %d entered the correct password.\n", client->client_id);
-                    sending_data(client->socket, "Authentication successful. Please choose a menu number.\n");
+                    sending_data(client->socket, "Authentication successful. Please choose a menu number.\n", 2, client->client_id, 0, 0);
                     sleep(2);
                     while (1) {  // Now we expect the client to choose a sale number
                         sendMenu(client->socket);
@@ -329,7 +334,7 @@ void *handle_client(void *client_ptr) {
                         int numb_menu = atoi(buffer);
                         if (numb_menu > num_of_sales || numb_menu <= 0) {
                             printf("Invalid menu option from client %d: chose %d (only %d options available).\n", client->client_id, numb_menu, num_of_sales);
-                            sending_data(client->socket, "Invalid menu option. Please try again.\n");
+                            sending_data(client->socket, "Invalid menu option. Please try again.\n", 2, client->client_id, 0, 0);
                         } else {
                             printf("Client %d chose menu option %s\n", client->client_id, buffer);
 
@@ -342,13 +347,13 @@ void *handle_client(void *client_ptr) {
                             // Send the correct multicast IP to the client
                             char dat[BUFFER_SIZE];
                             snprintf(dat, BUFFER_SIZE, "Multicast IP: %s\nPort: %d\n", sales[client->selected_sale - 1].multicast_ip, sales[client->selected_sale - 1].multicast_port);
-                            sending_data(client->socket, dat);
+                            sending_data(client->socket, dat, 2, client->client_id, 0, 0);
                             break;  // Exit after sending the multicast IP to the client
                         }
                     }
                 } else { // Password is incorrect
                     printf("Client %d entered an incorrect password.\n", client->client_id);
-                    sending_data(client->socket, "Wrong password. I am calling the police! WEEWOOWEEOO\n");
+                    sending_data(client->socket, "Wrong password. I am calling the police! WEEWOOWEEOO\n", 2, client->client_id, 0, 0);
                     close(client->socket);
                     
                     // Clean up client state
@@ -434,7 +439,13 @@ void *command_handler(void *arg) {
                                         pthread_mutex_unlock(&client_mutex);
 
                                         printf("Starting sale %d: %s\n", sale_number, sales[sale_number - 1].title);
-                                        start_sale(&sales[sale_number - 1]);
+                                        
+                                        // Start the sale in a new thread
+                                        pthread_t sale_thread;
+                                        if (pthread_create(&sale_thread, NULL, sale_handler, &sales[sale_number - 1]) != 0) {
+                                            perror("Failed to create sale handler thread");
+                                        }
+                                        pthread_detach(sale_thread);
                                     } else {
                                         pthread_mutex_unlock(&client_mutex);
                                         printf("Sale %d: %s has already started.\n", sale_number, sales[sale_number - 1].title);
@@ -451,7 +462,13 @@ void *command_handler(void *arg) {
                                 if (sales[sale_number - 1].is_started == 1) {
                                     pthread_mutex_unlock(&client_mutex);
                                     printf("Resuming sale %d: %s\n", sale_number, sales[sale_number - 1].title);
-                                    start_sale(&sales[sale_number - 1]);
+                                    
+                                    // Start the sale in a new thread
+                                    pthread_t sale_thread;
+                                    if (pthread_create(&sale_thread, NULL, sale_handler, &sales[sale_number - 1]) != 0) {
+                                        perror("Failed to create sale handler thread");
+                                    }
+                                    pthread_detach(sale_thread);
                                 } else {
                                     pthread_mutex_unlock(&client_mutex);
                                     printf("Sale %d: %s has not started yet.\n", sale_number, sales[sale_number - 1].title);
@@ -505,19 +522,27 @@ void *command_handler(void *arg) {
 //========================
 // Sale Management Functions
 //========================
+
+// New function to handle the sale in a separate thread
+void *sale_handler(void *arg) {
+    Sale *sale = (Sale *)arg;
+    start_sale(sale);
+    return NULL;
+}
+
 void start_sale(Sale *sale) {
     char buffer[BUFFER_SIZE];
 
     // Inform clients that the sale has started
     snprintf(buffer, BUFFER_SIZE, "The sale %s has started!\n", sale->title);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer, 1, 0, sale->id, 0);
 
     // Inform clients of the rules and the initial money
     snprintf(buffer, BUFFER_SIZE, "The rule is simple: each one of you has %.2f$. There are %d items in this sale. Each item has a starting price.\nSo think well before making offers!\n\nAh! There’s one more important rule: THE SPICE RULE: The second highest price wins!\n\ngood luck!", sale->money_capacity, sale->num_of_items);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer, 1, 0, sale->id, 0);
 
     snprintf(buffer, BUFFER_SIZE, "You have been given %.2f$ for this sale.\n", sale->money_capacity);
-    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+    send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer, 1, 0, sale->id, 0);
 
     // Set initial money for each client in this sale
     pthread_mutex_lock(&client_mutex);
@@ -543,13 +568,18 @@ void start_sale(Sale *sale) {
     clear_client_screens(sale);
 
     // Handle the bidding process
-    handle_bidding(sale);
+    pthread_t bidding_thread;
+    if (pthread_create(&bidding_thread, NULL, handle_bidding, (void *)sale) != 0) {
+        perror("Failed to create bidding thread");
+    }
+    pthread_detach(bidding_thread);
 }
 
 //========================
 // Bidding Management Function
 //========================
-void handle_bidding(Sale *sale) {
+void *handle_bidding(void *arg) {
+    Sale *sale = (Sale *)arg;
     int num_clients = sale->num_of_clients;
     Client **bidding_clients = malloc(sizeof(Client *) * num_clients);
     int client_count = 0;
@@ -558,6 +588,13 @@ void handle_bidding(Sale *sale) {
         if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
             bidding_clients[client_count++] = clients[i];
         }
+    }
+
+    // Send item information to clients
+    for (int i = 0; i < sale->num_of_items; i++) {
+        char item_info[BUFFER_SIZE];
+        snprintf(item_info, BUFFER_SIZE, "ITEM;%d;%d;%.2f", sale->items[i].id, sale->id, sale->items[i].start_price);
+        send_multicast_message(sale->multicast_ip, sale->multicast_port, item_info, 5, 0, sale->id, sale->items[i].id);
     }
 
     time_t start_time = time(NULL);
@@ -596,7 +633,7 @@ void handle_bidding(Sale *sale) {
         snprintf(buffer, size, "The winner is %s with a bid of %d$ for the item: %s!\n",
                  winning_client->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
 
-        send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
+        send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer, 6, winning_client->client_id, sale->id, sale->items[sale->num_of_items - 1].id);
         
         // Update winning client's money
         winning_client->money -= second_highest_bid;
@@ -610,7 +647,7 @@ void handle_bidding(Sale *sale) {
         snprintf(result_message, size, "Congratulations %s! You've won the item for %d$. Your remaining money: %.2f$\n",
                  winning_client->user_name, second_highest_bid, winning_client->money);
 
-        sending_data(winning_client->socket, result_message);
+        sending_data(winning_client->socket, result_message, 6, winning_client->client_id, sale->id, sale->items[sale->num_of_items - 1].id);
 
         // Free the dynamically allocated memory
         free(buffer);
@@ -620,4 +657,7 @@ void handle_bidding(Sale *sale) {
     free(bidding_clients);
 
     sale->num_of_items--;
+
+    return NULL;
 }
+
