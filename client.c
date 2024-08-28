@@ -1,3 +1,21 @@
+הקובץ המצורף 20240625_115233.jpg נוסף. 
+השיחה נפתחה. הודעה אחת שלא נקראה.
+
+דילוג לתוכן
+שימוש ב-דואר Ben-Gurion University of the Negev עם קוראי מסך
+1 מתוך 4,222
+latest work 3 clients OMG OMG OMG‏
+לא בדומיין
+דואר נכנס
+Tomer E
+	
+קבצים מצורפים20:37 ‎(לפני 0 דקות)‎
+	
+אני
+
+ 2 קבצים מצורפים  •  נסרקו על ידי Gmail
+	
+
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -237,4 +255,7 @@ void handle_bidding(int sock) {
     scanf("%s", bid);
     sending_data(sock, bid);
 }
+
+client.txt
+מציג את client.txt.
 

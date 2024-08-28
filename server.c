@@ -1,3 +1,21 @@
+הקובץ המצורף 20240625_115233.jpg נוסף. 
+השיחה נפתחה. הודעה אחת שלא נקראה.
+
+דילוג לתוכן
+שימוש ב-דואר Ben-Gurion University of the Negev עם קוראי מסך
+1 מתוך 4,222
+latest work 3 clients OMG OMG OMG‏
+לא בדומיין
+דואר נכנס
+Tomer E
+	
+קבצים מצורפים20:37 ‎(לפני 0 דקות)‎
+	
+אני
+
+ 2 קבצים מצורפים  •  נסרקו על ידי Gmail
+	
+
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -7,6 +25,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+#include <poll.h> // Include the poll library for adding timeout functionality
 
 #define BUFFER_SIZE 1024
 #define PORT 8083
@@ -124,14 +143,25 @@ void handle_bidding(Sale *sale) {
     int winning_client_id = -1;
     char buffer[BUFFER_SIZE] = {0};
     int bets_received = 0;
+    int active_clients = sale->num_of_clients;
 
+    printf("Starting bidding for item: %s with %d active clients\n", sale->items[sale->num_of_items - 1].name, active_clients);
+
+    // Notify clients to place their bids
     snprintf(buffer, BUFFER_SIZE, "Place your bids for item: %.20s (Starting price: %.2f$)\n", 
              sale->items[sale->num_of_items - 1].name, sale->items[sale->num_of_items - 1].start_price);
     send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
 
-    while (bets_received < sale->num_of_clients) {
+    // Collect bids from clients
+    while (bets_received < active_clients) {
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
+                // Set a receive timeout
+                struct timeval tv;
+                tv.tv_sec = 10;  // 10 seconds timeout
+                tv.tv_usec = 0;
+                setsockopt(clients[i]->socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+
                 int bytes_received = recv(clients[i]->socket, buffer, BUFFER_SIZE, 0);
                 if (bytes_received > 0) {
                     buffer[bytes_received] = '\0';
@@ -139,46 +169,54 @@ void handle_bidding(Sale *sale) {
                     clients[i]->bid_value = bid;
                     bets_received++;
                     printf("Received bid of %d$ from client %d (%s)\n", bid, clients[i]->client_id, clients[i]->user_name);
+
+                    // Determine highest and second-highest bids
+                    if (bid > highest_bid) {
+                        second_highest_bid = highest_bid;
+                        highest_bid = bid;
+                        winning_client_id = i;
+                    } else if (bid > second_highest_bid) {
+                        second_highest_bid = bid;
+                    }
+                } else if (bytes_received == 0) {
+                    printf("Client %d disconnected.\n", clients[i]->client_id);
+                    close(clients[i]->socket);
+                    clients[i] = NULL;
+                    active_clients--;
+                } else {
+                    printf("Client %d timed out or error occurred. Ignoring this client for this round.\n", clients[i]->client_id);
+                    active_clients--;
                 }
             }
         }
     }
 
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i] != NULL && clients[i]->selected_sale == sale->id) {
-            if (clients[i]->bid_value > highest_bid) {
-                second_highest_bid = highest_bid;
-                highest_bid = clients[i]->bid_value;
-                winning_client_id = i;
-            } else if (clients[i]->bid_value > second_highest_bid) {
-                second_highest_bid = clients[i]->bid_value;
-            }
-        }
-    }
-
+    // Announce the winner (the highest bidder) and charge them the second-highest bid
     if (winning_client_id != -1) {
         snprintf(buffer, BUFFER_SIZE, 
-            "The winner is %.20s with a bid of %d$ for the item: %.20s!\n",
-            clients[winning_client_id]->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
+            "The winner is %.20s with a bid of %d$, but they will pay %d$ for the item: %.20s!\n",
+            clients[winning_client_id]->user_name, highest_bid, second_highest_bid, sale->items[sale->num_of_items - 1].name);
         
         send_multicast_message(sale->multicast_ip, sale->multicast_port, buffer);
 
+        // Deduct money from the winner based on the second-highest bid
+        clients[winning_client_id]->money -= second_highest_bid;
+
         snprintf(buffer, BUFFER_SIZE, 
-            "Congratulations %.20s! You've won the item for %d$. Your remaining money: %.2f$\n",
-            clients[winning_client_id]->user_name, second_highest_bid, clients[winning_client_id]->money);
+            "Congratulations %.20s! You've won the item with a bid of %d$, but you will pay %d$. Your remaining money: %.2f$\n",
+            clients[winning_client_id]->user_name, highest_bid, second_highest_bid, clients[winning_client_id]->money);
 
         sending_data(clients[winning_client_id]->socket, buffer);  // Send personalized message to the winner
 
-        printf("The winner is %s with a bid of %d$ for the item: %s!\n",
-               clients[winning_client_id]->user_name, highest_bid, sale->items[sale->num_of_items - 1].name);
-
-        clients[winning_client_id]->money -= second_highest_bid;
-        printf("Client %s's remaining money: %.2f$\n", 
-               clients[winning_client_id]->user_name, clients[winning_client_id]->money);
+        printf("The winner is %s with a bid of %d$, paying %d$ for the item: %s!\n",
+               clients[winning_client_id]->user_name, highest_bid, second_highest_bid, sale->items[sale->num_of_items - 1].name);
+    } else {
+        printf("No winner could be determined for this item.\n");
     }
 
     sale->num_of_items--;
 }
+
 
 void start_sale(Sale *sale) {
     char buffer[BUFFER_SIZE];
@@ -202,7 +240,7 @@ void start_sale(Sale *sale) {
     }
     pthread_mutex_unlock(&client_mutex);
 
-    sleep(30);
+    sleep(2);
     clear_client_screens(sale);
 
     while (sale->num_of_items > 0) {
@@ -273,6 +311,10 @@ void *handle_client(void *client_ptr) {
             } else if (flg == 0) {
                 printf("Received offer to username from client %d: %s\n", client->client_id, buffer);
                 strncpy(client->user_name, buffer, BUFFER_SIZE);
+                
+                // Remove any trailing newline character from the username
+                client->user_name[strcspn(client->user_name, "\n")] = '\0';
+
                 flg = 1;
             }
         } else if (bytes_received == 0) {
@@ -300,6 +342,7 @@ void *handle_client(void *client_ptr) {
         }
     }
 }
+
 
 void *command_handler(void *arg) {
     char command_buffer[BUFFER_SIZE];
@@ -413,9 +456,10 @@ void send_multicast_message(const char* multicast_ip, int multicast_port, const 
 
     if (sendto(sockfd, message, strlen(message), 0, (struct sockaddr*)&multicast_addr, sizeof(multicast_addr)) < 0) {
         perror("sendto failed");
-    } else {
-        printf("Multicast message sent to %s: %s\n", multicast_ip, message);
     }
+    
+    // Commenting out or removing the following line to avoid excessive logging
+    // printf("Multicast message sent to %s: %s\n", multicast_ip, message);
 
     close(sockfd);
 }
@@ -532,4 +576,7 @@ int createWelcomeSocket(short port, int maxClient) {
     }
     return serverSocket;
 }
+
+server.txt
+מציג את client.txt.
 
