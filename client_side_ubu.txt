@@ -1,0 +1,744 @@
+// ====================================================================
+// Auction Client Program
+// This program allows a user to connect to an auction server,
+// log in, join a sale, bid on items, and receive auction updates.
+// It uses TCP for main communication and UDP multicast for auction announcements.
+// ====================================================================
+
+#include <stdio.h>           
+#include <stdlib.h>          
+#include <string.h>           
+#include <sys/socket.h>      
+#include <netinet/in.h>     
+#include <arpa/inet.h>       
+#include <unistd.h>          
+#include <pthread.h>         
+#include <sys/select.h>     
+
+
+// Define server and multicast communication parameters
+#define SERVER_IP "192.168.1.19"    // The IP address of the auction server that we want to connect to
+#define SERVER_PORT 8888            // The main TCP port the server listens on for our connections
+#define MULTICAST_PORT 8889         // A special UDP port for receiving auction announcements from the server (this is different from SERVER_PORT)
+#define MULTICAST_PING "MULTICAST_PING" // A constant string, not directly used in the client's logic right now
+#define BUFFER_SIZE 1024            // This sets a standard size for our message buffers (how much data we can hold at once)
+
+// Global variables that different (threads) might need to access
+int global_client_sock = -1;        // This will hold the "phone line number" (socket descriptor) to the server. We make it global so all our threads can use it. It's -1 because we haven't opened it yet.
+volatile int input_loop_running = 0; // This is a special "flag" or switch. It tells us if our threads for user commands is active (1) or not (0). 'volatile' means the computer won't optimize it away, always checking its real value.
+
+
+// Structure to pass arguments to the keep-alive thread
+typedef struct {
+    int sock;                   //  for the keep-alive thread (hold the phone line)
+    char username[50];          // This will hold the user's username for the keep-alive thread
+} keep_alive_args; // We give this new container type the name 'keep_alive_args'
+
+
+//========================
+// Function Prototypes - These are like a table of contents for our functions
+//========================
+int create_socket();                                    // Declares a function that will make a new "phone line" (socket) and give us its number
+
+void connect_to_server(int sock, const char* ip, int port); // Declares a function that will connect our "phone line" to the server
+void send_message(int sock, const char* message);       // Declares a function that sends a message over our "phone line"
+void send_welcome_message(int sock);                    // Declares a function for logging in and setting up initial things
+void receive_message(int sock);                         // Declares the main function that listens for all messages from the server
+void process_general_message(const char *message);     // Declares a function to handle general messages from the server (like a list of auctions)
+void process_sale_stoc_message(int sock, const char *message); // Declares a function to handle messages about a specific auction (like its special announcement channel)
+void process_item_stoc_message(int sock, const char *message); // Declares a function to handle messages about an item up for bid
+void process_winner_packet(const char *message);        // Declares a function to handle messages announcing who won an item
+void send_item_ctos_message(int sock, const char *item_id, const char *price); // Declares a function for us to send our bid for an item
+void process_keep_alive_ack(const char *message);       // Declares a function to handle messages saying "I got your keep-alive!" (acknowledgment)
+void *user_command_handler_loop(void *sock_ptr);        // Declares a function for a new "thread" that will constantly listen for our keyboard commands
+void send_sale_ctos_message(int sock, const char *sale_id); // Declares a function for us to tell the server which auction we want to join or leave
+void *listen_to_multicast(void *multicast_ip_ptr);      // Declares a function for a new "thread" that will listen to special auction announcements on a different channel
+void *keep_alive_loop(void *args);                      // Declares a function for a new "thread" that will keep telling the server we're still here
+void send_keep_alive(int sock, const char *username);   // Declares a function that sends a single "I'm here!" message
+void print_client_help();                               // Declares a function to show us all the commands we can type
+
+
+
+
+
+
+//========================
+// Socket Creation Function
+//========================
+// Creates a new (TCP)socket.
+int create_socket() {
+    // `socket()` creates a new socket.
+    // AF_INET: We want to use IPv4 addresses (like "192.168.1.1").
+    // SOCK_STREAM: We want a TCP connection (reliable).
+    // 0: Use the default protocol for TCP *******************************.
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) { // error checks
+        perror("Could not create socket"); // Print a system error message.
+        exit(EXIT_FAILURE); // Stop the entire program because this is a critical failure.
+    }
+    return sock; // Return the number (descriptor) of our new socket.
+}
+
+
+
+//========================
+// Server Connection Function
+//========================
+// Connects the given socket to the specified server IP address and port.
+void connect_to_server(int sock, const char* ip, int port) {
+    struct sockaddr_in server; // This structure will hold the server's address information.
+
+    // Convert the server's IP address (like "192.168.1.19") from text to a binary format
+    // that the computer understands, and store it in the 'server' structure.
+    server.sin_addr.s_addr = inet_addr(ip);
+    server.sin_family = AF_INET; // Set the address family to IPv4.
+    // Convert the server's port number (e.g., 8888) from our computer's number format
+    // to the network's standard number format (big-endian), and store it.
+    server.sin_port = htons(port);
+
+    // `connect()` attempts to establish a connection.
+    // `sock`: Our socket's number.
+    // `(struct sockaddr *)&server`: The server's address, cast to a generic socket address type.
+    // `sizeof(server)`: The size of the server address structure.
+    if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
+        perror("Connect failed. Error"); // Print a system error message if connection fails.
+        exit(EXIT_FAILURE); // Stop the program because we can't talk to the server.
+    }
+    printf("Connected to server at %s:%d\n", ip, port); // Inform the user that connection was successful.
+}
+
+
+
+//========================
+// General Send Function
+//========================
+// Sends a generic message over the specified TCP socket.
+void send_message(int sock, const char* message) {
+    // Check if the socket is valid (greater than 0) before attempting to send.
+    if (sock <= 0) {
+        fprintf(stderr, "Error: Attempted to send on an invalid socket (%d).\n", sock);
+        return; // Stop the function if the socket is invalid.
+    }
+    // `send()` attempts to transmit data.
+    // `sock`: Our socket's number.
+    // `message`: The text we want to send.
+    // `strlen(message)`: The length of the text message.
+    // `0`: No special flags for sending.
+    if (send(sock, message, strlen(message), 0) < 0) {
+        perror("Send failed"); // Print a system error message if sending fails.
+        // In a real application, you might want more sophisticated error handling here,
+        // such as marking the client connection as broken or attempting to reconnect.
+    }
+}
+
+
+
+
+//========================
+// Specific Message Functions
+//========================
+
+// Prompts the user for username and password, sends a type-1 login message to the server,
+// and then starts a separate thread to send keep-alive messages.
+void send_welcome_message(int sock) {
+    char username[50], password[50]; // Buffers (storage areas) to hold the username and password typed by the user.
+
+    printf("Enter your username: "); // Ask the user for their username.
+    // `fgets` is used to read input safely, including spaces if allowed, and prevents common input issues.
+    if (fgets(username, sizeof(username), stdin) == NULL) {
+        perror("Failed to read username"); // Print an error if reading fails.
+        exit(EXIT_FAILURE); // Stop the program if we can't get input.
+    }
+    username[strcspn(username, "\n")] = 0; // `strcspn` finds the position of the newline character `\n` (when you press Enter), and we replace it with a null terminator `0` to cut off the newline.
+
+    printf("Enter your password: "); // Ask for the password.
+    if (fgets(password, sizeof(password), stdin) == NULL) {
+        perror("Failed to read password");
+        exit(EXIT_FAILURE);
+    }
+    password[strcspn(password, "\n")] = 0; // Remove the newline from the password as well.
+
+    char message[BUFFER_SIZE]; // A buffer to build the login message that we'll send to the server.
+    // Format the login message according to the server's protocol:
+    // "1" (This is the message type for login)
+    // "%02zu" (This inserts the length of the username, padded with a leading zero if it's a single digit, e.g., "05")
+    // "%02zu" (This inserts the length of the password, similarly padded)
+    // "%s" (This inserts the actual username string)
+    // "%s" (This inserts the actual password string)
+    sprintf(message, "1%02zu%02zu%s%s", strlen(username), strlen(password), username, password);
+    send_message(sock, message); // Send this specially formatted login message to the server.
+
+    // --- Now, let's create our first "mini-thread" (thread)! ---
+    pthread_t keep_alive_thread; // This declares a variable to hold the ID of our new "keep-alive" thread.
+    // We need a small box (`keep_alive_args`) to give our new thread its tools (the socket and username).
+    // `malloc` asks for memory to create this box.
+    keep_alive_args *args = malloc(sizeof(keep_alive_args));
+    if (args == NULL) { // Always check if `malloc` successfully got memory.
+        perror("Failed to allocate memory for keep_alive_args");
+        // If we can't create the args, we can't start the thread.
+        return; // In this simple example, we just return. In a real app, you might try again or exit.
+    }
+    args->sock = sock; // Put the socket number into the thread's tool box.
+    strcpy(args->username, username); // Copy the username into the thread's tool box.
+
+    // `pthread_create()` is the command to create and start a new thread (our "mini-thread").
+    // 1. `&keep_alive_thread`: Where to store the new thread's ID.
+    // 2. `NULL`: We don't need special thread settings for now.
+    // 3. `keep_alive_loop`: This is the *function* (the job) that our new thread will do.
+    // 4. `(void *)args`: This is the tool box (arguments) we give to our new thread, cast to a generic type.
+    if (pthread_create(&keep_alive_thread, NULL, keep_alive_loop, (void *)args) != 0) {
+        perror("Failed to create keep-alive thread"); // Print an error if we can't hire the thread.
+        free(args); // Important: if we can't start the thread, free the memory we allocated.
+        return;
+    }
+    // `pthread_detach()` tells the operating system: "This thread is independent. When it finishes its job,
+    // you (the OS) can clean up its resources automatically. My main program won't wait for it."
+    pthread_detach(keep_alive_thread);
+	
+}
+
+
+
+
+
+
+
+//========================
+// Keep-Alive Loop Thread Function
+//========================
+// This function runs in a separate thread and periodically sends keep-alive messages to the server.
+void *keep_alive_loop(void *args) {
+    // We get the arguments from the generic `void *args` and cast them back to our specific `keep_alive_args` type.
+    keep_alive_args *ka_args = (keep_alive_args *)args;
+    int sock = ka_args->sock;           // Get the socket number from the arguments.
+    char *username = ka_args->username; // Get the username from the arguments.
+
+    while (1) { // This is an infinite loop, meaning this worker will keep doing its job forever.
+        sleep(60);  // Pause this thread for 60 seconds. This worker rests between messages.
+        send_keep_alive(sock, username); // Call the function to send the actual "I'm here!" message.
+    }
+
+    // This `free(ka_args)` line is placed here, but it's important to understand:
+    // Because the `while(1)` loop is infinite, this line will technically *never be reached*
+    // unless the program is explicitly stopped or this thread is externally cancelled.
+    // In more complex scenarios, you might add a flag to the loop to allow it to exit gracefully.
+    // free(ka_args);
+    return NULL; // Threads that start with `void *` functions must return `NULL` (or any `void *` value).
+}
+
+
+
+
+
+//========================
+// Send Keep Alive Message Function (Type 8)
+//========================
+// Constructs and sends a type-8 keep-alive message to the server.
+void send_keep_alive(int sock, const char *username) {
+    char message[BUFFER_SIZE]; // Buffer to build the message.
+    time_t t = time(NULL);     // Get the current time (a big number representing seconds since a certain date).
+    struct tm *tm_info = localtime(&t); // Convert that big number into a more readable time structure (year, month, day, hour, minute, second).
+    char timestamp[20];        // Buffer to store the formatted time string.
+
+    // `strftime()` formats the time structure into a string like "14:35:01".
+    strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
+
+    // Build the keep-alive message according to the server's protocol:
+    // <type '8'> + 2-digit length of username + 2-digit length of timestamp + username string + timestamp string.
+    sprintf(message, "8%02zu%02zu%s%s", strlen(username), strlen(timestamp), username, timestamp);
+    send_message(sock, message); // Send the formatted keep-alive message using our generic `send_message` function.
+}
+
+
+//========================
+// Send Sale CtoS Message Function (Type 4, handles -1 for exit)  (CtoS --> Client to Server)
+//========================
+// Sends a type-4 message to the server to join a specific auction sale or to exit the current one.
+// If `sale_id` is "-1", it signals the server that the client wants to exit the program.
+void send_sale_ctos_message(int sock, const char *sale_id) {
+    char message[BUFFER_SIZE]; // Buffer to build the message.
+    // Format the message: <type '4'> + 2-digit length of sale_id + sale_id string.
+    sprintf(message, "4%02zu%s", strlen(sale_id), sale_id);
+    send_message(sock, message); // Send the formatted message to the server.
+
+    // If the user entered "-1", this indicates a request to exit the program.
+    if (strcmp(sale_id, "-1") == 0) { // `strcmp` compares two strings. If they are identical, it returns 0.
+        printf("Exiting sale and program.\n"); // Inform the user.
+        input_loop_running = 0; // IMPORTANT: Set our global flag to 0. This tells our "user command manager" worker to stop its loop.
+        close(sock);            // Close our main "phone line" (TCP socket) connection to the server.
+        exit(0);                // Terminate the client program with a success code (0 means no errors).
+    }
+}
+
+
+
+
+
+
+
+//========================
+// Process Winner Packet (Type 7)
+//========================
+// Parses and displays information about the winner of an item from a type-7 server message.
+void process_winner_packet(const char *message) {
+    // Extract lengths of the fields from the message header.
+    // The server sends lengths as 2-digit numbers. `strndup` creates a temporary string
+    // from a specific part of the message, and `atoi` converts it to an integer.
+    // `message + 1` means start reading from the second character (skipping the message type '7').
+    int item_id_len = atoi(strndup(message + 1, 2));
+    // `message + 3` means start reading from the fourth character.
+    int name_len = atoi(strndup(message + 3, 2));
+    // `message + 5` means start reading from the sixth character.
+    int price_len = atoi(strndup(message + 5, 2)); // Fixed to read 2 digits for price length for server compatibility
+
+    // Extract the actual data strings (item ID, winner name, winning price) based on their lengths and offsets.
+    // The offsets are calculated by adding the lengths of the preceding header fields.
+    // Total header length before data: 1 (type) + 2 (item_id_len_field) + 2 (name_len_field) + 2 (price_len_field) = 7 characters.
+    char *item_id = strndup(message + 7, item_id_len);
+    char *winner_name = strndup(message + 7 + item_id_len, name_len);
+    char *price_str = strndup(message + 7 + item_id_len + name_len, price_len);
+
+    printf("Winner Packet Received:\n");
+    printf("Item ID: %s, Winner: %s, Winning Price: %s\n", item_id, winner_name, price_str);
+
+    // IMPORTANT: `strndup` allocates new memory for each string. We must free this memory
+    // when we are done with it to prevent "memory leaks".
+    free(item_id);
+    free(winner_name);
+    free(price_str);
+}
+
+
+
+
+//========================
+// Send Item CtoS Message Function (Type 6)
+//========================
+// Sends a type-6 message to the server, representing a client's bid for an item.
+void send_item_ctos_message(int sock, const char *item_id, const char *price) {
+    char message[BUFFER_SIZE]; // Buffer to build the message.
+    // Format the message:
+    // <type '6'> (message type for item bid)
+    // + 2-digit length of item_id string
+    // + 2-digit length of price string
+    // + item_id string
+    // + price string
+    sprintf(message, "6%02zu%02zu%s%s", strlen(item_id), strlen(price), item_id, price);
+    send_message(sock, message); // Send the formatted bid message to the server.
+    printf("Sent Item CtoS message: Item ID = %s, Price = %s\n", item_id, price); // Confirm what was sent.
+}
+
+
+
+
+
+
+//========================
+// Process Item StoC Message Function (TYPE 5 with Timeout for Input)
+//========================
+// Handles incoming type-5 messages (item details from server) and prompts the user for a bid
+// with a timeout. This function is called by the main listening thread.
+void process_item_stoc_message(int sock, const char *message) {
+    // Extract lengths of the fields from the message header.
+    // message + 1, 2: 2 digits for item_id_len
+    int item_id_len = atoi(strndup(message + 1, 2));
+    // message + 3, 2: 2 digits for item_name_len
+    int item_name_len = atoi(strndup(message + 3, 2));
+    // message + 5, 2: 2 digits for item_price_len
+    int item_price_len = atoi(strndup(message + 5, 2));
+
+    // Extract the actual data strings based on their lengths and offsets.
+    // Offset calculation: 1 (type) + 2 (item_id_len_field) + 2 (item_name_len_field) + 2 (item_price_len_field) = 7 characters.
+    char *item_id_str = strndup(message + 7, item_id_len);
+    char *item_name = strndup(message + 7 + item_id_len, item_name_len);
+    char *item_price_str = strndup(message + 7 + item_id_len + item_name_len, item_price_len);
+    float item_price = atof(item_price_str); // Convert the starting price string to a floating-point number.
+
+    printf("Received item from server:\n");
+    printf("Item ID: %s, Name: %s, Starting Price: %.2f\n", item_id_str, item_name, item_price);
+
+    // --- Setting up a timer for user input (the "select" part) ---
+    struct timeval tv;      // This structure holds the timeout duration.
+    tv.tv_sec = 12;         // Set the timeout duration to 12 seconds.
+    tv.tv_usec = 0;         // Set microseconds part to 0.
+
+    fd_set read_fds;        // This is a special set (like a list) of "file descriptors" (our keyboard input is a file descriptor).
+    FD_ZERO(&read_fds);     // Clear the set, making sure it's empty.
+    FD_SET(STDIN_FILENO, &read_fds); // Add `STDIN_FILENO` (which represents our keyboard input) to the set.
+
+    printf("Enter your offer price for this item (or wait to skip): ");
+    // `select()` waits until either:
+    // 1. There's input ready on our keyboard (`STDIN_FILENO` becomes readable).
+    // 2. The timeout (12 seconds) expires.
+    // `STDIN_FILENO + 1` is the highest file descriptor in the set plus one (a requirement of `select`).
+    // `&read_fds`: The set of descriptors to check for reading.
+    // `NULL, NULL`: We don't care about writing or error checking here.
+    // `&tv`: The timeout duration.
+    int ret = select(STDIN_FILENO + 1, &read_fds, NULL, NULL, &tv);
+
+    if (ret > 0) { // If `select` returns a positive value, it means input is available (you typed something).
+        char offered_price[BUFFER_SIZE]; // Buffer for the user's offer price.
+        if (fgets(offered_price, sizeof(offered_price), stdin)) { // Read the offer price safely using `fgets`.
+            offered_price[strcspn(offered_price, "\n")] = 0; // Remove the trailing newline.
+            send_item_ctos_message(sock, item_id_str, offered_price); // Send your bid to the server.
+        }
+    } else { // If `select` returns 0 (timeout) or -1 (error).
+        printf("\nNo input. Skipping the item.\n"); // Inform the user that no bid was placed due to timeout or no input.
+    }
+
+    // Free the dynamically allocated memory for the extracted strings.
+    free(item_id_str);
+    free(item_name);
+    free(item_price_str);
+}
+
+
+
+
+//========================
+// Process Sale StoC Message (Type 3)
+//========================
+// Parses type-3 messages (sale details from server) and starts a multicast listener thread for that sale.
+// This function is called by the main listening thread.
+void process_sale_stoc_message(int sock, const char *message) {
+    // Extract lengths of the fields from the message header, similar to previous parsing.
+    // The server sends lengths as 2-digit numbers.
+    // message + 2, 2: 2 digits for sale_id_len (skipping type '3' + 1 char length for type)
+    int sale_id_len = atoi(strndup(message + 2, 2));
+    // message + 4, 2: 2 digits for sale_name_len
+    int sale_name_len = atoi(strndup(message + 4, 2));
+    // message + 6, 2: 2 digits for multicast_ip_len
+    int multicast_ip_len = atoi(strndup(message + 6, 2));
+
+    // Extract the actual data strings based on their lengths and offsets.
+    // Total header length: 1 (type) + 2 (sale_id_len_field) + 2 (sale_name_len_field) + 2 (multicast_ip_len_field) = 7 characters.
+    char *sale_id = strndup(message + 8, sale_id_len);
+    char *sale_name = strndup(message + 8 + sale_id_len, sale_name_len);
+    // IMPORTANT: We duplicate the `multicast_ip` string here (`strndup`) because
+    // this string will be passed to a new thread (`listen_to_multicast`).
+    // The new thread will then be responsible for freeing this memory when it's done.
+    char *multicast_ip = strndup(message + 8 + sale_id_len + sale_name_len, multicast_ip_len);
+
+    if (!multicast_ip) { // Check if memory allocation for multicast_ip failed.
+        perror("Failed to strdup multicast IP");
+        free(sale_id); // Clean up already allocated memory.
+        free(sale_name);
+        return; // Stop the function.
+    }
+
+    printf("Joining multicast group at IP: %s for Sale ID: %s, Name: %s\n",
+           multicast_ip, sale_id, sale_name);
+
+    // --- Now, let's create our third "mini-worker" (thread)! ---
+    pthread_t multicast_thread; // Declares a variable to hold the ID of our new "multicast listener" worker.
+    // Create a new thread to run the `listen_to_multicast` function, passing the duplicated multicast IP.
+    if (pthread_create(&multicast_thread, NULL, listen_to_multicast, (void *)multicast_ip) != 0) {
+        perror("Failed to create multicast listener thread"); // Print an error if we can't hire the worker.
+        free(multicast_ip); // If thread creation fails, free the IP string immediately.
+    } else {
+        // Detach the multicast thread. It will run independently and clean up its own resources.
+        pthread_detach(multicast_thread);
+    }
+
+    // Free the dynamically allocated memory for sale_id and sale_name, as they are no longer needed in this function.
+    free(sale_id);
+    free(sale_name);
+    // Remember: `multicast_ip` is freed by the `listen_to_multicast` thread.
+}
+
+
+
+
+//========================
+// Multicast Listener Thread Function
+//========================
+// This function runs in a separate thread and listens for UDP multicast messages
+// on a specific multicast IP and port.
+void *listen_to_multicast(void *multicast_ip_ptr) {
+    char *ip = (char *)multicast_ip_ptr; // Get the multicast IP address string passed from the main thread.
+    int sock;                             // Socket descriptor for the multicast UDP socket.
+    struct sockaddr_in local_addr;        // Structure to store our local binding address for the socket.
+    struct ip_mreq mreq;                  // Structure for defining our membership in a multicast group.
+
+    // Create a UDP socket.
+    // AF_INET: IPv4. SOCK_DGRAM: UDP (datagram) socket. 0: Default protocol.
+    if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("Multicast socket creation failed");
+        free(ip); // If socket creation fails, free the IP string and exit the thread.
+        return NULL;
+    }
+
+    // --- IMPORTANT FOR MULTIPLE INSTANCES ON THE SAME PC ---
+    // This option allows multiple sockets (from different client instances on the same machine)
+    // to bind to the same local address and port. Without this, only the first client
+    // could bind, and others would fail with "Address already in use".
+    int reuse = 1; // Value 1 means "allow reuse".
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        perror("setsockopt SO_REUSEADDR failed");
+        close(sock); free(ip); return NULL;
+    }
+    // SO_REUSEPORT is specifically for allowing multiple *active* sockets to listen
+    // on the exact same port. It's often Linux-specific, hence the `#ifdef`.
+    #ifdef SO_REUSEPORT
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) < 0) {
+        perror("setsockopt SO_REUSEPORT failed");
+        close(sock); free(ip); return NULL;
+    }
+    #endif
+
+    memset(&local_addr, 0, sizeof(local_addr)); // Clear the local address structure to all zeros.
+    local_addr.sin_family = AF_INET;           // Set the address family to IPv4.
+    // `htonl(INADDR_ANY)` tells the socket to bind to any available network interface on your computer.
+    // This means it will receive multicast packets arriving on any of your network cards.
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    // Convert `MULTICAST_PORT` to network byte order and bind to this specific UDP port (8889).
+    local_addr.sin_port = htons(MULTICAST_PORT);
+
+    // Bind the socket to the local address and port. This is where our socket
+    // "sets up shop" to receive data.
+    if (bind(sock, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0) {
+        perror("Multicast socket bind failed");
+        close(sock); free(ip); return NULL;
+    }
+
+    // Set up the multicast group membership request.
+    // `mreq.imr_multiaddr.s_addr = inet_addr(ip)`: This is the specific multicast group IP (e.g., 224.11.0.1) we want to join.
+    // `mreq.imr_interface.s_addr = htonl(INADDR_ANY)`: Tells the system to use any available network interface to join the group.
+    mreq.imr_multiaddr.s_addr = inet_addr(ip);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+
+    // Add the socket to the specified multicast group. This tells your operating system
+    // to forward packets destined for this multicast IP to your socket.
+    if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
+        perror("Adding multicast group membership failed");
+        close(sock); free(ip); return NULL;
+    }
+
+    printf("Listening to multicast IP: %s on port %d\n", ip, MULTICAST_PORT); // Inform the user.
+    char buffer[BUFFER_SIZE]; // Buffer for received multicast messages.
+    while (1) { // Infinite loop to continuously receive multicast messages.
+        // `recvfrom()` receives data on a UDP socket.
+        // `sock`: The multicast socket.
+        // `buffer`: Where to store the received data.
+        // `sizeof(buffer) - 1`: Max bytes to receive (leave space for null terminator).
+        // `0`: No special flags.
+        // `NULL, 0`: We don't care about the sender's address for multicast announcements.
+        ssize_t nbytes = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, NULL, 0);
+        if (nbytes < 0) { // If an error occurred during reception.
+            perror("Multicast recvfrom failed");
+            break; // Exit the loop on error.
+        }
+        buffer[nbytes] = '\0'; // Null-terminate the received data.
+        printf("Multicast message received: %s\n", buffer); // Print the received message.
+    }
+
+    // Clean up resources when the thread exits (e.g., if there was an error or the program shuts down).
+    free(ip);     // Free the dynamically allocated multicast IP string.
+    close(sock);  // Close the multicast socket.
+    return NULL;  // Return NULL.
+}
+
+
+
+
+//========================
+// Process General Message (Type 9)
+//========================
+// Handles type-9 messages (general information from server, typically list of sales)
+// and initiates the user command input loop if it's not already running.
+// This function is called by the main listening thread.
+void process_general_message(const char *message) {
+    // Extract the length of the data from the message header.
+    // message + 1, 3: 3 digits for data_len.
+    int data_len = atoi(strndup(message + 1, 3));
+    char *data = strndup(message + 4, data_len); // Extract the actual data string (e.g., "Available Sales: ID 0, ID 1").
+
+    printf("Available Sales IDs: %s\n", data); // Print the available sales information.
+    free(data); // Free the dynamically allocated data string.
+
+    // --- NEW LOGIC FOR USER INPUT THREAD: Starting the "user command manager" ---
+    // This ensures the continuous user command handler starts ONLY after the client
+    // has received the initial list of sales from the server. This provides a better
+    // user experience because they won't be prompted to join a sale before knowing what sales exist.
+    if (!input_loop_running) { // Check if the command loop thread is NOT already running.
+        pthread_t command_thread; // Declare a variable to hold the ID of our new "user command manager" worker.
+        // Create a new thread to handle user commands concurrently.
+        // We pass `&global_client_sock` so this worker knows which main "phone line" to use.
+        if (pthread_create(&command_thread, NULL, user_command_handler_loop, (void *)&global_client_sock) != 0) {
+            perror("Failed to create user command handler thread"); // Print an error if we can't hire the worker.
+        } else {
+            pthread_detach(command_thread); // Detach the thread. It will run independently.
+            input_loop_running = 1; // Set our global flag to 1, indicating that the manager is now active.
+        }
+    }
+}
+
+
+
+
+
+//========================
+// Continuous User Command Handler Loop (NEW)
+//========================
+// This function runs in a separate thread, continuously reading commands from the user
+// and dispatching them to appropriate client actions. It acts as our "user command manager".
+void *user_command_handler_loop(void *sock_ptr) {
+    int sock = *(int *)sock_ptr; // Get the client's main socket number from the arguments.
+    char command[BUFFER_SIZE];   // Buffer to store user's typed commands.
+
+    // This loop continues as long as the `input_loop_running` flag is true.
+    // When we want to exit the program, `process_sale_ctos_message` (when given "-1")
+    // will set this flag to 0, causing this loop to gracefully stop.
+    while (input_loop_running) {
+        printf("\nEnter command (join <ID>, help, exit): "); // Prompt the user for input.
+        // Use `fgets` for safer input, allowing commands that might contain spaces (like "join 1").
+        if (fgets(command, sizeof(command), stdin) == NULL) {
+            printf("Error reading input. Exiting command loop.\n");
+            break; // Exit the loop on input error.
+        }
+        command[strcspn(command, "\n")] = 0; // Remove the trailing newline character from the command.
+
+        // Check for specific commands using `strncmp` (for "join ") or `strcmp` (for exact matches).
+        if (strncmp(command, "join ", 5) == 0) { // If the command starts with "join " (e.g., "join 0", "join 1")
+            char *sale_id_str = command + 5;     // Get the part of the string after "join " (which is the sale ID).
+            send_sale_ctos_message(sock, sale_id_str); // Send the "join sale" message to the server.
+        } else if (strcmp(command, "help") == 0) { // If the command is exactly "help"
+            print_client_help();                   // Call the function to display client help.
+        } else if (strcmp(command, "exit") == 0) { // If the command is exactly "exit"
+            send_sale_ctos_message(sock, "-1");    // Send the special "-1" message to the server to signal exit.
+            break;                                 // Exit this thread's loop immediately, as the program will terminate.
+        } else {
+            printf("Unknown command. Type 'help' for available commands.\n"); // Inform the user if the command is not recognized.
+        }
+    }
+    return NULL; // Return NULL as per the `pthread_create` function signature.
+}
+
+
+
+
+
+
+//========================
+// Client Help Message (NEW)
+//========================
+// Displays a list of commands available to the client user.
+void print_client_help() {
+    printf("\n--- Client Commands ---\n");
+    printf("  join <sale_id> - Join a specific auction sale (e.g., 'join 0').\n");
+    printf("  help           - Display this help message.\n");
+    printf("  exit           - Disconnect from the server and exit the program.\n");
+    printf("  Note: Bidding for items happens automatically when an item is presented.\n");
+    printf("        Just type your offer price when prompted and hit Enter within the timeout.\n");
+    printf("-------------------------\n");
+}
+
+
+
+
+
+//========================
+// Process Keep-Alive Acknowledgment (Type 2)
+//========================
+// Handles type-2 messages (acknowledgments for keep-alive messages).
+// For this client, no specific action is needed beyond receiving it.
+void process_keep_alive_ack(const char *message) {
+    // This function is intentionally empty. The acknowledgment simply confirms
+    // that the server received our keep-alive, which is enough for our client.
+}
+
+
+
+//========================
+// Main Message Receiver and Dispatcher
+//========================
+// Continuously receives messages from the server on the TCP socket and dispatches
+// them to the appropriate `process_` function based on their type.
+// This function is the primary job of our main program thread.
+void receive_message(int sock) {
+    char buffer[BUFFER_SIZE]; // Buffer to store the received message data.
+    // `recv()` attempts to receive data from the server.
+    // `sock`: The socket to receive from.
+    // `buffer`: Where to store the received data.
+    // `sizeof(buffer) - 1`: Maximum bytes to receive (leave space for null terminator).
+    // `0`: No special flags.
+    ssize_t bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+
+    if (bytes_received > 0) { // Case 1: Data was successfully received.
+        buffer[bytes_received] = '\0'; // Null-terminate the received data to make it a valid C string.
+        int message_type = buffer[0] - '0'; // Extract the message type from the first character.
+                                            // Subtracting '0' converts the character digit (e.g., '5') to an integer (5).
+
+        // Use a `switch` statement to call the correct handler function based on the message type.
+        // This is like the main listener saying, "Okay, what kind of message is this? Send it to the right department!"
+        switch (message_type) {
+            case 2: process_keep_alive_ack(buffer); break;       // Server acknowledges our keep-alive.
+            case 3: process_sale_stoc_message(sock, buffer); break; // Server sends details about an auction sale.
+            case 5: process_item_stoc_message(sock, buffer); break; // Server presents an item for bidding.
+            case 7: process_winner_packet(buffer); break;       // Server announces an item winner.
+            case 9: process_general_message(buffer); break;      // Server sends a general message (like available sales list).
+            default:
+                // If an unknown message type is received, print a warning to help with debugging.
+                printf("Unknown message type received: %d. Message: %s\n", message_type, buffer);
+                break;
+        }
+    } else if (bytes_received == 0) { // Case 2: 0 bytes received means the server has gracefully closed its connection.
+        printf("Server closed the connection.\n");
+        input_loop_running = 0; // IMPORTANT: Set the global flag to 0. This tells the "user command manager" to stop its loop.
+        close(sock);            // Close our client's main socket.
+        exit(0);                // Terminate the client program with a success code.
+    } else { // Case 3: `bytes_received` is less than 0, indicating an error during reception.
+        perror("recv failed"); // Print a system error message for the receive failure.
+        // In a more robust application, you might attempt to reconnect or log the error in more detail.
+        input_loop_running = 0; // Set the flag to stop the user command loop on error.
+        close(sock);            // Close the client's socket.
+        exit(EXIT_FAILURE);     // Terminate the client program with an error code.
+    }
+}
+
+
+
+
+
+//---------------------------------------------------------------------------------------------------------------------
+
+//========================
+// Main Function - This is where our program starts running
+//========================
+int main(int argc, char *argv[]) {
+    // 1. Create our main "phone line" (socket) to talk to the server
+    int sock = create_socket(); // Calls our 'create_socket' function to get a socket number
+    if (sock < 0) {             // If the socket number is less than 0, something went wrong
+        fprintf(stderr, "Failed to create socket.\n"); // Print an error message
+        return 1; // Stop the program with an error code
+    }
+
+    // 2. Write down this "phone line number" on our shared whiteboard
+    global_client_sock = sock; // This makes the socket number available to other "mini-workers" (threads)
+
+    // 3. Connect our "phone line" to the server
+    connect_to_server(sock, SERVER_IP, SERVER_PORT); // Calls our 'connect_to_server' function to make the connection
+
+    // 4. Send our "hello" message and login details to the server
+    send_welcome_message(sock); // Calls our 'send_welcome_message' function. This also starts our "keep-alive" worker.
+
+
+	// NEW: Print client commands once right after login.
+    // The user command handler thread (user_command_handler_loop) will be started
+    // by `process_general_message` when the first list of sales is received from the server.
+    print_client_help(); // Display client commands upfront.
+	
+	
+    // 5. This is the main loop where our program's primary worker (the `main` thread itself)
+    //    will dedicate itself to constantly listening for messages from the server.
+    //    It runs indefinitely until the server closes the connection or the client explicitly exits.
+    while (1) {
+        receive_message(sock); // Calls our 'receive_message' function to get and process data from the server.
+    }
+
+    // These lines are theoretically unreachable because the `while(1)` loop above
+    // will typically run indefinitely or `exit(0)` will be called upon disconnection.
+    printf("Client shutting down...\n");
+    close(sock); // Close our main "phone line"
+    return 0;    // Program finishes successfully
+}

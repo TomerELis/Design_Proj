@@ -1,0 +1,32 @@
+Server:
+scp ubu@192.2.5.1:/  [Location of files]    /root/
+password: ubu
+
+//use ifconfig to find the ip 
+//than change this line in client side : #define SERVER_IP "192.168.1.19"
+
+gcc -std=gnu99 server_file_name.c -o new_name 
+./new_name
+
+
+
+
+
+
+
+
+
+Client:
+scp ubu@192.2.5.1:/   [Location of files]  /root/
+password: ubu
+
+
+gcc -std=gnu99 -Wall client_file_name.c -o client -ipthread
+./client
+
+
+
+passwrod for the sales - Kofiko
+
+
+
